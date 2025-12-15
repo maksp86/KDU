@@ -17,7 +17,7 @@ build_script:
   - msbuild Source/kdu.sln /p:Configuration=Release /p:Platform=x64 /p:PlatformToolset=v143
 
 after_build:
-  - 7z a kdu-%APPVEYOR_BUILD_VERSION%.zip c:\projects\kdu\Source\**\bin\x64\Release\*
+  - 7z a kdu-%APPVEYOR_BUILD_VERSION%.zip c:\projects\kdu\Source\**\output\x64\Release\*.exe c:\projects\kdu\Source\**\output\x64\Release\*.dll
 
 artifacts:
   - path: kdu-%APPVEYOR_BUILD_VERSION%.zip
