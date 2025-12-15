@@ -1,12 +1,12 @@
 /*******************************************************************************
 *
-*  (C) COPYRIGHT AUTHORS, 2018 - 2025
+*  (C) COPYRIGHT AUTHORS, 2018 - 2023
 *
 *  TITLE:       VICTIM.CPP
 *
-*  VERSION:     1.45
+*  VERSION:     1.31
 *
-*  DATE:        30 Nov 2025
+*  DATE:        09 Apr 2023
 *
 *  Victim support routines.
 *
@@ -140,25 +140,19 @@ LPWSTR VppBuildDriverName(
 )
 {
     LPWSTR lpFileName;
-    SIZE_T cchLength = MAX_PATH * 2;
-    SIZE_T cbLength = cchLength * sizeof(WCHAR);
+    SIZE_T Length = (MAX_PATH + _strlen(VictimName)) * sizeof(WCHAR);
 
-    lpFileName = (LPWSTR)supHeapAlloc(cbLength);
+    lpFileName = (LPWSTR)supHeapAlloc(Length);
     if (lpFileName == NULL) {
         SetLastError(ERROR_NOT_ENOUGH_MEMORY);
     }
     else {
 
-        if (FAILED(StringCchPrintf(lpFileName,
-            cchLength,
+        StringCchPrintf(lpFileName,
+            MAX_PATH * 2,
             L"%ws\\system32\\drivers\\%ws.sys",
             USER_SHARED_DATA->NtSystemRoot,
-            VictimName)))
-        {
-            supHeapFree(lpFileName);
-            lpFileName = NULL;
-            SetLastError(ERROR_BUFFER_OVERFLOW);
-        }
+            VictimName);
 
     }
 
@@ -499,8 +493,6 @@ BOOL VpCreateFromExistingCallback(
 
         DWORD vSize = 0;
         PVOID vpImage = PELoaderLoadImage(drvBuffer, &vSize);
-
-        supHeapFree(drvBuffer);
 
         if (vpImage == NULL) {
 

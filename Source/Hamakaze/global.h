@@ -1,12 +1,12 @@
 /*******************************************************************************
 *
-*  (C) COPYRIGHT AUTHORS, 2020 - 2025
+*  (C) COPYRIGHT AUTHORS, 2020 - 2023
 *
 *  TITLE:       GLOBAL.H
 *
-*  VERSION:     1.44
+*  VERSION:     1.31
 *
-*  DATE:        18 Aug 2025
+*  DATE:        08 Apr 2023
 *
 *  Common include header file.
 *
@@ -46,7 +46,6 @@
 #include <SetupAPI.h>
 #include <newdev.h>
 #include <Bcrypt.h>
-#include<fltuser.h>
 
 #if defined(__cplusplus)
 extern "C" {
@@ -74,7 +73,6 @@ extern "C" {
 #pragma comment(lib, "Setupapi.lib")
 #pragma comment(lib, "Newdev.lib")
 #pragma comment(lib, "Bcrypt.lib")
-#pragma comment(lib, "FltLib.lib")
 
 #include "shared/consts.h"
 #include "shared/kdubase.h"

@@ -1,12 +1,12 @@
 /*******************************************************************************
 *
-*  (C) COPYRIGHT AUTHORS, 2014 - 2025
+*  (C) COPYRIGHT AUTHORS, 2014 - 2023
 *
 *  TITLE:       KDUPROV.H
 *
-*  VERSION:     1.44
+*  VERSION:     1.40
 *
-*  DATE:        19 Aug 2025
+*  DATE:        21 Oct 2023
 *
 *  Provider support routines.
 *
@@ -203,10 +203,7 @@ typedef struct _KDU_CONTEXT {
 
     ULONG_PTR NtOsBase;
     ULONG_PTR NtOsMappedBase;
-    union {
-        HANDLE DeviceHandle;
-        HANDLE PortHandle;
-    };
+    HANDLE DeviceHandle;
 
     //full file name to the vulnerable driver
     PWSTR DriverFileName; 
@@ -253,12 +250,34 @@ VOID KDUProvList();
 BOOL WINAPI KDUProviderPostOpen(
     _In_ PVOID Param);
 
+BOOL WINAPI KDUVirtualToPhysical(
+    _In_ KDU_CONTEXT* Context,
+    _In_ ULONG_PTR VirtualAddress,
+    _Out_ ULONG_PTR* PhysicalAddress);
+
+_Success_(return != FALSE)
+BOOL WINAPI KDUReadKernelVM(
+    _In_ KDU_CONTEXT * Context,
+    _In_ ULONG_PTR Address,
+    _Out_writes_bytes_(NumberOfBytes) PVOID Buffer,
+    _In_ ULONG NumberOfBytes);
+
+_Success_(return != FALSE)
+BOOL WINAPI KDUWriteKernelVM(
+    _In_ KDU_CONTEXT * Context,
+    _In_ ULONG_PTR Address,
+    _Out_writes_bytes_(NumberOfBytes) PVOID Buffer,
+    _In_ ULONG NumberOfBytes);
+
 _Success_(return != FALSE)
 BOOL WINAPI KDUOpenProcess(
     _In_ struct _KDU_CONTEXT* Context,
     _In_ HANDLE ProcessId,
     _In_ ACCESS_MASK DesiredAccess,
     _Out_ PHANDLE ProcessHandle);
+
+BOOL WINAPI KDUProviderStub(
+    VOID);
 
 HINSTANCE KDUProviderLoadDB(
     VOID);

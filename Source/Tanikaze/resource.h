@@ -52,17 +52,13 @@
 #define IDR_ASROCKDRV2                  150
 #define IDR_ASROCKAPPSHOP103            151
 #define IDR_ASROCKDRV3                  152
+#define IDR_RCDATA1                     153
 #define IDR_ASROCKDRV4                  153
-#define IDR_PMXDRV64                    154
-#define IDR_HWRWDRVX64                  155
-#define IDR_NEACSAFE64                  156
-#define IDR_THROTTLESTOP                157
 #define IDR_DATA_DBUTILCAT              1000
 #define IDR_DATA_DBUTILINF              1001
 #define IDR_DATA_KMUEXE                 1002
 #define IDR_DATA_KMUSIG                 1003
 #define IDR_DATA_ASUSCERTSERVICE        1004
-#define IDR_DATA_NEACSAFEINF            1005
 #define IDR_PROCEXP1627                 2000
 #define IDR_PROCEXP1702                 2001
 
@@ -70,7 +66,7 @@
 // 
 #ifdef APSTUDIO_INVOKED
 #ifndef APSTUDIO_READONLY_SYMBOLS
-#define _APS_NEXT_RESOURCE_VALUE        159
+#define _APS_NEXT_RESOURCE_VALUE        154
 #define _APS_NEXT_COMMAND_VALUE         40001
 #define _APS_NEXT_CONTROL_VALUE         1007
 #define _APS_NEXT_SYMED_VALUE           101

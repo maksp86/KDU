@@ -1,12 +1,12 @@
 /*******************************************************************************
 *
-*  (C) COPYRIGHT AUTHORS, 2020 - 2025
+*  (C) COPYRIGHT AUTHORS, 2020 - 2023
 *
 *  TITLE:       SUP.H
 *
-*  VERSION:     1.45
+*  VERSION:     1.33
 *
-*  DATE:        02 Dec 2025
+*  DATE:        16 Jun 2023
 *
 *  Support routines header file.
 *
@@ -298,12 +298,7 @@ VOID supGenerateSharedObjectName(
     _In_ WORD ObjectId,
     _Inout_ LPWSTR lpBuffer);
 
-BOOL supSetupManageFsFilterDriverPackage(
-    _In_ PVOID Context,
-    _In_ BOOLEAN DoInstall,
-    _In_ PSUP_SETUP_DRVPKG DriverPackage);
-
-BOOL supSetupManagePnpDriverPackage(
+BOOL supSetupManageDriverPackage(
     _In_ PVOID Context,
     _In_ BOOLEAN DoInstall,
     _In_ PSUP_SETUP_DRVPKG DriverPackage);
@@ -375,9 +370,7 @@ BOOL supEnumeratePhysicalMemory(
 
 BOOL supDetectMsftBlockList(
     _In_ PBOOL Enabled,
-    _In_ BOOL Disable,
-    _In_ ULONG NtBuildNumber,
-    _In_ BOOL HvciActive);
+    _In_ BOOL Disable);
 
 ULONG_PTR supResolveMiPteBaseAddress(
     _In_opt_ PVOID NtOsBase);
@@ -403,14 +396,3 @@ VOID CALLBACK supIpcDuplicateHandleCallback(
     _In_ PCLIENT_ID ClientId,
     _In_ PKDU_MSG Message,
     _In_opt_ PVOID UserContext);
-
-BOOL supBuildSuperfetchMemoryMap(
-    _Out_ PSUPERFETCH_MEMORY_MAP MemoryMap);
-
-VOID supFreeSuperfetchMemoryMap(
-    _In_ PSUPERFETCH_MEMORY_MAP MemoryMap);
-
-BOOL supSuperfetchVirtualToPhysical(
-    _In_ PSUPERFETCH_MEMORY_MAP MemoryMap,
-    _In_ ULONG_PTR VirtualAddress,
-    _Out_ PULONG_PTR PhysicalAddress);

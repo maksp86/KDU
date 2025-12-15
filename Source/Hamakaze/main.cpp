@@ -1,12 +1,12 @@
 /*******************************************************************************
 *
-*  (C) COPYRIGHT AUTHORS, 2020 - 2025
+*  (C) COPYRIGHT AUTHORS, 2020 - 2023
 *
 *  TITLE:       MAIN.CPP
 *
-*  VERSION:     1.44
+*  VERSION:     1.40
 *
-*  DATE:        19 Aug 2025
+*  DATE:        20 Oct 2023
 *
 *  Hamakaze main logic and entrypoint.
 *
@@ -24,10 +24,6 @@
 #define CMD_SCV         L"-scv"
 #define CMD_PS          L"-ps"
 #define CMD_PSE         L"-pse"
-#define CMD_PSW         L"-psw"
-#define CMD_PM          L"-pm"
-#define CMD_PM1         L"-pm1"
-#define CMD_PM2         L"-pm2"
 #define CMD_DMP         L"-dmp"
 #define CMD_DSE         L"-dse"
 #define CMD_LIST        L"-list"
@@ -44,13 +40,9 @@
                      "kdu -list         - List available providers\r\n"\
                      "kdu -diag         - Run system diagnostic for troubleshooting\r\n"\
                      "kdu -prv id       - Optional, sets provider id to be used with rest of commands, default 0\r\n"\
+                     "kdu -pse cmdline  - Launch program as PPL\r\n"\
                      "kdu -dmp pid      - Dump virtual memory of the given process\r\n"\
                      "kdu -ps pid       - Disable ProtectedProcess for given pid\r\n"\
-                     "kdu -pse cmdline  - Launch program as PsProtectedSignerAntimalware-Light\r\n"\
-                     "kdu -psw cmdline  - Launch program as PsProtectedSignerWinTcb-Light\r\n"\
-                     "kdu -pm pid       - Overwrites Process MitigationsFlags1 and 2 with 0x0 for given pid\r\n"\
-                     "kdu -pm1 pid      - Overwrites Process MitigationsFlags1 with 0x0 for given pid\r\n"\
-                     "kdu -pm2 pid      - Overwrites Process MitigationsFlags2 with 0x0 for given pid\r\n"\
                      "kdu -dse value    - Write user defined value to the system DSE state flags\r\n"\
                      "kdu -map filename - Map driver to the kernel and execute it entry point, this command have dependencies listed below\r\n"\
                      "-scv version      - Optional, select shellcode version, default 1\r\n"\
@@ -95,15 +87,14 @@ INT KDUProcessDmpSwitch(
 *
 * Purpose:
 *
-* Handle -pse and -psw switch.
+* Handle -pse switch.
 *
 */
 INT KDUProcessPSEObjectSwitch(
     _In_ ULONG HvciEnabled,
     _In_ ULONG NtBuildNumber,
     _In_ ULONG ProviderId,
-    _In_ LPWSTR CommandLine,
-    _In_ BOOL HighestSigner
+    _In_ LPWSTR CommandLine
 )
 {
     INT retVal = 0;
@@ -116,40 +107,7 @@ INT KDUProcessPSEObjectSwitch(
         ActionTypeDKOM);
 
     if (provContext) {
-        retVal = KDURunCommandPPL(provContext, CommandLine, HighestSigner);
-        KDUProviderRelease(provContext);
-    }
-
-    return retVal;
-}
-
-/*
-* KDUProcessPMObjectSwitch
-*
-* Purpose:
-*
-* Handle -pm(1,2) switches.
-*
-*/
-INT KDUProcessPMObjectSwitch(
-    _In_ ULONG HvciEnabled,
-    _In_ ULONG NtBuildNumber,
-    _In_ ULONG ProviderId,
-    _In_ ULONG_PTR ProcessId,
-	_In_ INT TargetedFlags
-)
-{
-    INT retVal = 0;
-    KDU_CONTEXT* provContext;
-
-    provContext = KDUProviderCreate(ProviderId,
-        HvciEnabled,
-        NtBuildNumber,
-        KDU_SHELLCODE_NONE,
-        ActionTypeDKOM);
-
-    if (provContext) {
-        retVal = KDUUnmitigateProcess(provContext, ProcessId, PS_NO_MITIGATIONS, TargetedFlags); // TODO: parametrize mitigations
+        retVal = KDURunCommandPPL(provContext, CommandLine);
         KDUProviderRelease(provContext);
     }
 
@@ -217,9 +175,12 @@ INT KDUProcessDSEFixSwitch(
 
         if (provContext->Provider->Callbacks.ControlDSE) {
 
-            ciVarAddress = KDUQueryCodeIntegrityVariableSymbol(NtBuildNumber);
+            ciVarAddress = KDUQueryCodeIntegrityVariableAddress(NtBuildNumber);
+
             if (ciVarAddress == 0) {
-                ciVarAddress = KDUQueryCodeIntegrityVariableAddress(NtBuildNumber);
+
+                ciVarAddress = KDUQueryCodeIntegrityVariableSymbol(NtBuildNumber);
+
             }
 
             if (ciVarAddress == 0) {
@@ -577,51 +538,6 @@ INT KDUProcessCommandLine(
                         processId);
                 }
 
-                else if (supGetCommandLineOption(CMD_PM,
-                    TRUE,
-                    szParameter,
-                    RTL_NUMBER_OF(szParameter),
-                    NULL))
-                {
-                    processId = strtou64(szParameter);
-
-                    retVal = KDUProcessPMObjectSwitch(HvciEnabled,
-                        NtBuildNumber,
-                        providerId,
-                        processId,
-                        PS_MITIGATION_FLAGS1 | PS_MITIGATION_FLAGS2);
-                }
-
-                else if (supGetCommandLineOption(CMD_PM1,
-                    TRUE,
-                    szParameter,
-                    RTL_NUMBER_OF(szParameter),
-                    NULL))
-                {
-                    processId = strtou64(szParameter);
-
-                    retVal = KDUProcessPMObjectSwitch(HvciEnabled,
-                        NtBuildNumber,
-                        providerId,
-                        processId,
-                        PS_MITIGATION_FLAGS1);
-                }
-
-                else if (supGetCommandLineOption(CMD_PM2,
-                    TRUE,
-                    szParameter,
-                    RTL_NUMBER_OF(szParameter),
-                    NULL))
-                {
-                    processId = strtou64(szParameter);
-
-                    retVal = KDUProcessPMObjectSwitch(HvciEnabled,
-                        NtBuildNumber,
-                        providerId,
-                        processId,
-                        PS_MITIGATION_FLAGS2);
-                }
-
                 else if (supGetCommandLineOption(CMD_PSE,
                     TRUE,
                     szParameter,
@@ -631,21 +547,7 @@ INT KDUProcessCommandLine(
                     retVal = KDUProcessPSEObjectSwitch(HvciEnabled,
                         NtBuildNumber,
                         providerId,
-                        szParameter,
-                        FALSE);
-                }
-
-                else if (supGetCommandLineOption(CMD_PSW,
-                    TRUE,
-                    szParameter,
-                    RTL_NUMBER_OF(szParameter),
-                    NULL))
-                {
-                    retVal = KDUProcessPSEObjectSwitch(HvciEnabled,
-                        NtBuildNumber,
-                        providerId,
-                        szParameter, 
-                        TRUE);
+                        szParameter);
                 }
 
                 else if (supGetCommandLineOption(CMD_DMP,
@@ -758,7 +660,6 @@ int KDUMain()
 
         SYSTEM_CODEINTEGRITY_INFORMATION ciPolicy;
         ULONG dummy = 0;
-        BOOL hvciActive = FALSE; 
 
         ciPolicy.Length = sizeof(ciPolicy);
         ciPolicy.CodeIntegrityOptions = 0;
@@ -774,10 +675,8 @@ int KDUMain()
             if (ciPolicy.CodeIntegrityOptions & CODEINTEGRITY_OPTION_DEBUGMODE_ENABLED)
                 printf_s("[*] Debug Mode ENABLED\r\n");
 
-            if (ciPolicy.CodeIntegrityOptions & CODEINTEGRITY_OPTION_HVCI_KMCI_ENABLED) {
-                hvciActive = TRUE;
+            if (ciPolicy.CodeIntegrityOptions & CODEINTEGRITY_OPTION_HVCI_KMCI_ENABLED)
                 printf_s("[*] HVCI KMCI ENABLED\r\n");
-            }
 
             if (ciPolicy.CodeIntegrityOptions & CODEINTEGRITY_OPTION_WHQL_ENFORCEMENT_ENABLED)
                 printf_s("[*] WHQL enforcement ENABLED\r\n");
@@ -786,7 +685,7 @@ int KDUMain()
 
         if (osv.dwBuildNumber >= NT_WIN10_REDSTONE5) {
             BOOL bEnabled = FALSE;
-            if (supDetectMsftBlockList(&bEnabled, FALSE, osv.dwBuildNumber, hvciActive)) {
+            if (supDetectMsftBlockList(&bEnabled, FALSE)) {
                 printf_s("[+] MSFT Driver block list is %sbled\r\n", (bEnabled) ? "ena" : "disa");
             }
         }

@@ -1,12 +1,12 @@
 /*******************************************************************************
 *
-*  (C) COPYRIGHT AUTHORS, 2022 - 2025
+*  (C) COPYRIGHT AUTHORS, 2022 - 2023
 *
 *  TITLE:       DIAG.CPP
 *
-*  VERSION:     1.45
+*  VERSION:     1.33
 *
-*  DATE:        30 Nov 2025
+*  DATE:        16 Jul 2023
 *
 *  Hamakaze system diagnostics component.
 *
@@ -25,6 +25,20 @@ typedef struct _OBJENUMPARAM {
     PWSTR ObjectDirectory;
     PUNICODE_STRING ObjectType;
 } OBJENUMPARAM, * POBJENUMPARAM;
+
+typedef struct _FILTER_FULL_INFORMATION {
+    ULONG NextEntryOffset;
+    ULONG FrameID;
+    ULONG NumberOfInstances;
+    USHORT FilterNameLength;
+    WCHAR FilterNameBuffer[1];
+} FILTER_FULL_INFORMATION, * PFILTER_FULL_INFORMATION;
+
+typedef enum _FILTER_INFORMATION_CLASS {
+    FilterFullInformation,
+    FilterAggregateBasicInformation,
+    FilterAggregateStandardInformation
+} FILTER_INFORMATION_CLASS, * PFILTER_INFORMATION_CLASS;
 
 NTSTATUS NTAPI EnumObjectsCallback(
     _In_ POBJECT_DIRECTORY_INFORMATION Entry,
@@ -288,7 +302,7 @@ VOID KDUQueryProcessWorkingSet(
                         (LPCSTR)pvModules->Modules[moduleIndex].FullPathName,
                         &vaModuleName)))
                     {
-                        vaName = vaModuleName.Buffer;
+                        pcName = vaModuleName.Buffer;
                     }
                 }
 
@@ -601,7 +615,6 @@ VOID KDUListFilters()
 
         if (!NT_SUCCESS(ntStatus)) {
             supPrintfEvent(kduEventError, "Cannot open %wZ, NTSTATUS (0x%lX)\r\n", usDeviceName, ntStatus);
-            supHeapFree(buffer);
             return;
         }
 

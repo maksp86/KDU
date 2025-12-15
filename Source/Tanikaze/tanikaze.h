@@ -1,12 +1,12 @@
 /*******************************************************************************
 *
-*  (C) COPYRIGHT AUTHORS, 2020 - 2025
+*  (C) COPYRIGHT AUTHORS, 2020 - 2023
 *
 *  TITLE:       CONSTS.H
 *
-*  VERSION:     1.24
+*  VERSION:     1.19
 *
-*  DATE:        02 Dec 2025
+*  DATE:        10 Dec 2023
 *
 *  Tanikaze helper dll (part of KDU project).
 *
@@ -803,67 +803,7 @@ KDU_DB_ENTRY gProvEntry[] = {
         (LPWSTR)L"AsrDrv107",
         (LPWSTR)L"AsrDrv107",
         (LPWSTR)L"ASROCK INC."
-     },
-
-    {
-        KDU_MIN_NTBUILDNUMBER,
-        KDU_MAX_NTBUILDNUMBER,
-        IDR_PMXDRV64,
-        KDU_PROVIDER_INTEL_PMXDRV,
-        KDU_VICTIM_DEFAULT,
-        SourceBaseNone,
-        KDUPROV_FLAGS_SIGNATURE_WHQL | KDUPROV_FLAGS_PML4_FROM_LOWSTUB,
-        KDUPROV_SC_ALL_DEFAULT,
-        (LPWSTR)L"Intel(R) Management Engine Tools Driver",
-        (LPWSTR)L"PMxDrv",
-        (LPWSTR)L"Pmxdrv",
-        (LPWSTR)L"Intel(R) Embedded Subsystems and IP Blocks Group"
-    },
-
-    {
-        KDU_MIN_NTBUILDNUMBER,
-        KDU_MAX_NTBUILDNUMBER,
-        IDR_HWRWDRVX64,
-        KDU_PROVIDER_HWRWDRVX64,
-        KDU_VICTIM_DEFAULT,
-        SourceBaseWinRing0,
-        KDUPROV_FLAGS_PHYSICAL_BRUTE_FORCE,
-        KDUPROV_SC_ALL_DEFAULT,
-        (LPWSTR)L"Hardware read & write driver",
-        (LPWSTR)L"HwRwDrv.x64",
-        (LPWSTR)L"HwRwDrv",
-        (LPWSTR)L"Open Source Developer, Jun Liu"
-    },
-
-    {
-        NT_WIN10_THRESHOLD1,
-        KDU_MAX_NTBUILDNUMBER,
-        IDR_NEACSAFE64,
-        KDU_PROVIDER_NEACSAFE64,
-        KDU_VICTIM_DEFAULT,
-        SourceBaseNone,
-        KDUPROV_FLAGS_SIGNATURE_WHQL | KDUPROV_FLAGS_NO_FORCED_SD | KDUPROV_FLAGS_FS_FILTER,
-        KDUPROV_SC_ALL_DEFAULT,
-        (LPWSTR)L"NeacSafe64 mini-filter driver (CVE-2025-45737)",
-        (LPWSTR)L"NeacSafe64",
-        (LPWSTR)L"OWNeacSafePort",
-        (LPWSTR)L"Microsoft Windows Hardware Compatibility Publisher"
-    },
-
-    {
-        KDU_MIN_NTBUILDNUMBER,
-        KDU_MAX_NTBUILDNUMBER,
-        IDR_THROTTLESTOP,
-        KDU_PROVIDER_TPUP,
-        KDU_VICTIM_DEFAULT,
-        SourceBaseNone,
-        KDUPROV_FLAGS_SIGNATURE_WHQL | KDUPROV_FLAGS_USE_SUPERFETCH,
-        KDUPROV_SC_ALL_DEFAULT,
-        (LPWSTR)L"TechPowerUp ThrottleStop (CVE-2025-7771)",
-        (LPWSTR)L"ThrottleStop",
-        (LPWSTR)L"ThrottleStop",
-        (LPWSTR)L"TechPowerUp"
-    }
+     }
 
 };
 
@@ -874,13 +814,6 @@ extern "C" {
     KDU_DB gProvTable = {
         RTL_NUMBER_OF(gProvEntry),
         gProvEntry
-    };
-
-    KDU_DB_VERSION gVersion = {
-        KDU_VERSION_MAJOR,
-        KDU_VERSION_MINOR,
-        KDU_VERSION_REVISION,
-        KDU_VERSION_BUILD
     };
 
 #ifdef __cplusplus

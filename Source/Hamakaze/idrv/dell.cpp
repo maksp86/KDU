@@ -1,12 +1,12 @@
 /*******************************************************************************
 *
-*  (C) COPYRIGHT AUTHORS, 2022 - 2025
+*  (C) COPYRIGHT AUTHORS, 2022 - 2023
 *
 *  TITLE:       DELL.CPP
 *
-*  VERSION:     1.44
+*  VERSION:     1.31
 *
-*  DATE:        18 Aug 2025
+*  DATE:        14 Apr 2023
 *
 *  Dell drivers routines.
 *
@@ -58,7 +58,7 @@ BOOL DbUtilStartVulnerableDriver(
         //
         // Driver is not loaded, load it.
         //
-        RtlSecureZeroMemory(&g_DbUtilPackage, sizeof(SUP_SETUP_DRVPKG));
+        RtlSecureZeroMemory(&g_DbUtilPackage, sizeof(g_DbUtilPackage));
 
         g_DbUtilPackage.CatalogFile = DBUTILCAT_FILE;
         g_DbUtilPackage.CatalogFileResourceId = IDR_DATA_DBUTILCAT;
@@ -71,7 +71,7 @@ BOOL DbUtilStartVulnerableDriver(
 
         g_DbUtilPackage.InstallFlags = INSTALLFLAG_FORCE | INSTALLFLAG_NONINTERACTIVE;
 
-        bLoaded = supSetupManagePnpDriverPackage(Context, TRUE, &g_DbUtilPackage);
+        bLoaded = supSetupManageDriverPackage(Context, TRUE, &g_DbUtilPackage);
     }
 
     //
@@ -103,7 +103,7 @@ VOID DbUtilStopVulnerableDriver(
     LPWSTR lpFullFileName = Context->DriverFileName;
 
     supSetupRemoveDriver(g_DbUtilPackage.DeviceInfo, &g_DbUtilPackage.DeviceInfoData);
-    supSetupManagePnpDriverPackage(Context, FALSE, &g_DbUtilPackage);
+    supSetupManageDriverPackage(Context, FALSE, &g_DbUtilPackage);
 
     if (supDeleteFileWithWait(1000, 5, lpFullFileName))
         printf_s("[+] Vulnerable driver file removed\r\n");

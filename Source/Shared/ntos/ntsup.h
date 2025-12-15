@@ -1,12 +1,12 @@
 /************************************************************************************
 *
-*  (C) COPYRIGHT AUTHORS, 2011 - 2025 UGN/HE
+*  (C) COPYRIGHT AUTHORS, 2011 - 2023 UGN/HE
 *
 *  TITLE:       NTSUP.H
 *
-*  VERSION:     2.25
+*  VERSION:     2.22
 *
-*  DATE:        18 Aug 2025
+*  DATE:        22 Jul 2023
 *
 *  Common header file for the NT API support functions and definitions.
 *
@@ -72,12 +72,7 @@ typedef BOOL(CALLBACK* PNTSUPMEMFREE)(
 
 #define ntsupProcessHeap() NtCurrentPeb()->ProcessHeap
 
-#define NTSUPHASH_SHA256_SIZE 32
-
-#define MAX_NTSUP_BUFFER_SIZE (512 * 1024 * 1024) //512MB
-#define MAX_NTSUP_ENV_SCAN 4096
-#define MAX_NTSUP_PROCESS_ENUM_ITER (1024 * 1024)
-#define MAX_NTSUP_WRITE_CHUNK 0x7FFFFFFF
+#define NTQSI_MAX_BUFFER_LENGTH (512 * 1024 * 1024)
 
 typedef struct _OBJSCANPARAM {
     PCWSTR Buffer;
@@ -103,11 +98,6 @@ typedef struct _PATTERN_SEARCH_PARAMS {
     pfnPatternSearchCallback Callback;
     PVOID CallbackContext;
 } PATTERN_SEARCH_PARAMS, * PPATTERN_SEARCH_PARAMS;
-
-typedef enum _NTSUP_IMAGE_TYPE {
-    ImageTypeRaw,       // Raw file mapping (CreateFileMapping)
-    ImageTypeLoaded     // Loaded module (PEB/LdrEntry)
-} NTSUP_IMAGE_TYPE;
 
 PVOID ntsupHeapAlloc(
     _In_ SIZE_T Size);
@@ -362,13 +352,6 @@ BOOLEAN ntsupIsObjectExists(
 
 BOOLEAN ntsupUserIsFullAdmin(
     VOID);
-
-NTSTATUS ntsupHashImageSections(
-    _In_ PVOID ImageBase,
-    _In_ SIZE_T ImageSize,
-    _Out_writes_bytes_(HashBufferSize) PBYTE HashBuffer,
-    _In_ SIZE_T HashBufferSize,
-    _In_ NTSUP_IMAGE_TYPE ImageType);
 
 #define ntsupQuerySecurityInformation(\
      ObjectHandle, SecurityInformationClass, Buffer, ReturnLength, AllocMem, FreeMem) \

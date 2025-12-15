@@ -1,12 +1,12 @@
 /*******************************************************************************
 *
-*  (C) COPYRIGHT AUTHORS, 2020 - 2025
+*  (C) COPYRIGHT AUTHORS, 2020 - 2023
 *
 *  TITLE:       DRVMAP.CPP
 *
-*  VERSION:     1.44
+*  VERSION:     1.31
 *
-*  DATE:        19 Aug 2025
+*  DATE:        09 Apr 2023
 *
 *  Driver mapping routines.
 *
@@ -59,9 +59,9 @@ VOID KDUShowPayloadResult(
         &viewSize,
         ViewUnmap,
         0,
-        PAGE_READONLY);
+        PAGE_READWRITE);
 
-    if (NT_SUCCESS(ntStatus) && pvPayloadHead.Ref) {
+    if (NT_SUCCESS(ntStatus)) {
 
         switch (Context->ShellVersion) {
 

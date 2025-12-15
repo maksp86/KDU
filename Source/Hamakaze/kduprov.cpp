@@ -1,12 +1,12 @@
 ﻿/*******************************************************************************
 *
-*  (C) COPYRIGHT AUTHORS, 2020 - 2025
+*  (C) COPYRIGHT AUTHORS, 2020 - 2023
 *
 *  TITLE:       KDUPROV.CPP
 *
-*  VERSION:     1.45
+*  VERSION:     1.40
 *
-*  DATE:        30 Nov 2025
+*  DATE:        21 Oct 2023
 *
 *  Vulnerable drivers provider abstraction layer.
 *
@@ -171,7 +171,7 @@ VOID KDUProvList()
         printf_s("Provider # %lu, ResourceId # %lu\r\n\t%ws, DriverName \"%ws\", DeviceName \"%ws\"\r\n",
             provData->ProviderId,
             provData->ResourceId,
-            provData->Description,
+            provData->Desciption,
             provData->DriverName,
             provData->DeviceName);
 
@@ -617,6 +617,119 @@ BOOL WINAPI KDUProviderPostOpen(
     return (deviceHandle != NULL);
 }
 
+/*
+* KDUVirtualToPhysical
+*
+* Purpose:
+*
+* Provider wrapper for VirtualToPhysical routine.
+*
+*/
+BOOL WINAPI KDUVirtualToPhysical(
+    _In_ KDU_CONTEXT* Context,
+    _In_ ULONG_PTR VirtualAddress,
+    _Out_ ULONG_PTR* PhysicalAddress)
+{
+    KDU_PROVIDER* prov = Context->Provider;
+
+    if (PhysicalAddress)
+        *PhysicalAddress = 0;
+    else {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+
+    if (prov->Callbacks.VirtualToPhysical == NULL) {
+        SetLastError(ERROR_NOT_SUPPORTED);
+        return FALSE;
+    }
+
+    return prov->Callbacks.VirtualToPhysical(Context->DeviceHandle,
+        VirtualAddress,
+        PhysicalAddress);
+}
+
+/*
+* KDUReadKernelVM
+*
+* Purpose:
+*
+* Provider wrapper for ReadKernelVM routine.
+*
+*/
+_Success_(return != FALSE)
+BOOL WINAPI KDUReadKernelVM(
+    _In_ KDU_CONTEXT * Context,
+    _In_ ULONG_PTR Address,
+    _Out_writes_bytes_(NumberOfBytes) PVOID Buffer,
+    _In_ ULONG NumberOfBytes)
+{
+    BOOL bResult = FALSE;
+    KDU_PROVIDER* prov = Context->Provider;
+
+    if (Address < Context->MaximumUserModeAddress) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+
+    //
+    // Some providers under several conditions may crash here without bugcheck.
+    //
+    __try {
+
+        bResult = prov->Callbacks.ReadKernelVM(Context->DeviceHandle,
+            Address,
+            Buffer,
+            NumberOfBytes);
+
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        SetLastError(GetExceptionCode());
+        return FALSE;
+    }
+    return bResult;
+}
+
+/*
+* KDUWriteKernelVM
+*
+* Purpose:
+*
+* Provider wrapper for WriteKernelVM routine.
+*
+*/
+_Success_(return != FALSE)
+BOOL WINAPI KDUWriteKernelVM(
+    _In_ KDU_CONTEXT * Context,
+    _In_ ULONG_PTR Address,
+    _Out_writes_bytes_(NumberOfBytes) PVOID Buffer,
+    _In_ ULONG NumberOfBytes)
+{
+    BOOL bResult = FALSE;
+    KDU_PROVIDER* prov = Context->Provider;
+
+    if (Address < Context->MaximumUserModeAddress) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+
+    //
+    // Some providers under several conditions may crash here without bugcheck.
+    //
+    __try {
+
+        bResult = prov->Callbacks.WriteKernelVM(Context->DeviceHandle,
+            Address,
+            Buffer,
+            NumberOfBytes);
+
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        SetLastError(GetExceptionCode());
+        return FALSE;
+    }
+    return bResult;
+}
 
 /*
 * KDUOpenProcess
@@ -665,8 +778,6 @@ HINSTANCE KDUProviderLoadDB(
 )
 {
     HINSTANCE hInstance;
-    KDU_DB_VERSION *pVersionInfo;
-    BOOL bFailed = TRUE;
 
     FUNCTION_ENTER_MSG(__FUNCTION__);
 
@@ -675,50 +786,12 @@ HINSTANCE KDUProviderLoadDB(
     if (hInstance) {
         printf_s("[+] Drivers database \"%ws\" loaded at 0x%p\r\n", DRV64DLL, hInstance);
 
-        do {
-
-            pVersionInfo = (PKDU_DB_VERSION)GetProcAddress(hInstance, "gVersion");
-            if (pVersionInfo == NULL) {
-                supPrintfEvent(kduEventError, "[!] Providers version data not found\r\n");
-                break;
-            }
-
-            if (pVersionInfo->MajorVersion != KDU_VERSION_MAJOR ||
-                pVersionInfo->MinorVersion != KDU_VERSION_MINOR ||
-                pVersionInfo->Revision != KDU_VERSION_REVISION ||
-                pVersionInfo->Build != KDU_VERSION_BUILD)
-            {
-                supPrintfEvent(kduEventError, "[!] Providers database has wrong version, expected %lu.%lu.%lu.%lu, got %lu.%lu.%lu.%lu\r\n",
-                    KDU_VERSION_MAJOR,
-                    KDU_VERSION_MINOR,
-                    KDU_VERSION_REVISION,
-                    KDU_VERSION_BUILD,
-                    pVersionInfo->MajorVersion,
-                    pVersionInfo->MinorVersion,
-                    pVersionInfo->Revision,
-                    pVersionInfo->Build);
-
-                break;
-            }
-            else {
-                printf_s("[+] Drivers database version is OK\r\n");
-            }
-
-            gProvTable = (PKDU_DB)GetProcAddress(hInstance, "gProvTable");
-            if (gProvTable == NULL) {
-                supPrintfEvent(kduEventError, "[!] Providers table not found\r\n");
-                break;
-            }
-
-            bFailed = FALSE;
-
-        } while (FALSE);
-
-        if (bFailed) {
+        gProvTable = (PKDU_DB)GetProcAddress(hInstance, "gProvTable");
+        if (gProvTable == NULL) {
+            supPrintfEvent(kduEventError, "[!] Providers table not found\r\n");
             FreeLibrary(hInstance);
             hInstance = NULL;
         }
-
     }
     else {
         supShowWin32Error("[!] Cannot load drivers database", GetLastError());
@@ -763,18 +836,8 @@ BOOL KDUProviderVerifyActionType(
     BOOL bResult = TRUE;
     
 #ifdef _DEBUG
-    DbgPrint("KDUProviderVerifyActionType bypassed\r\n");
     return TRUE;
 #endif
-
-    //
-    // Check mixed settings.
-    //
-    if (Provider->LoadData->PreferPhysical && Provider->LoadData->PreferVirtual) {
-        supPrintfEvent(kduEventError,
-            "[!] Abort: provider flags PreferPhysical and PreferVirtual cannot be combined\r\n");
-        return FALSE;
-    }
 
     switch (ActionType) {
     case ActionTypeDKOM:
@@ -811,7 +874,7 @@ BOOL KDUProviderVerifyActionType(
                 bSecondTry = FALSE;
             }
 
-            if (bFirstTry == FALSE && bSecondTry == FALSE) {
+            if (bFirstTry == NULL && bSecondTry == NULL) {
                 supPrintfEvent(kduEventError, "[!] Abort: selected provider does not support arbitrary kernel read/write or\r\n"\
                     "\tKDU interface is not implemented for these methods.\r\n");
                 return FALSE;
@@ -916,8 +979,7 @@ VOID KDUFallBackOnLoad(
     if (ctx->DeviceHandle)
         NtClose(ctx->DeviceHandle);
 
-    if (ctx->Provider->Callbacks.StopVulnerableDriver)
-        ctx->Provider->Callbacks.StopVulnerableDriver(ctx);
+    ctx->Provider->Callbacks.StopVulnerableDriver(ctx);
 
     if (ctx->DriverFileName)
         supHeapFree(ctx->DriverFileName);
@@ -982,7 +1044,7 @@ PKDU_CONTEXT WINAPI KDUProviderCreate(
         if (ProviderId >= KDUProvGetCount()) {
             
             supPrintfEvent(kduEventInformation,
-                "[+] Provider with id %lu is not supported, will be using default provider (0)\r\n",
+                "[+] Pprovider with id %lu is not supported, will be using default provider (0)\r\n",
                 ProviderId);
 
             ProviderId = KDU_PROVIDER_DEFAULT;
@@ -1045,7 +1107,7 @@ PKDU_CONTEXT WINAPI KDUProviderCreate(
         // Show provider info.
         //
         supPrintfEvent(kduEventInformation, "[+] Provider: \"%ws\", Name \"%ws\"\r\n",
-            provLoadData->Description,
+            provLoadData->Desciption,
             provLoadData->DriverName);
 
         //
@@ -1224,7 +1286,7 @@ PKDU_CONTEXT WINAPI KDUProviderCreate(
 *
 * Purpose:
 *
-* Release Provider context, free resources and unload driver.
+* Reelease Provider context, free resources and unload driver.
 *
 */
 VOID WINAPI KDUProviderRelease(
@@ -1270,8 +1332,6 @@ VOID WINAPI KDUProviderRelease(
             supHeapFree(Context->DriverFileName);
             Context->DriverFileName = NULL;
         }
-
-        supHeapFree(Context);
     }
 
     FUNCTION_LEAVE_MSG(__FUNCTION__);

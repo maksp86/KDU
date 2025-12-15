@@ -1,12 +1,12 @@
 /*******************************************************************************
 *
-*  (C) COPYRIGHT AUTHORS, 2020 - 2025
+*  (C) COPYRIGHT AUTHORS, 2020 - 2023
 *
 *  TITLE:       SUP.CPP
 *
-*  VERSION:     1.45
+*  VERSION:     1.33
 *
-*  DATE:        02 Dec 2025
+*  DATE:        16 Jul 2023
 *
 *  Program global support routines.
 *
@@ -18,6 +18,7 @@
 *******************************************************************************/
 
 #include "global.h"
+
 
 /*
 * supHeapAlloc
@@ -61,10 +62,7 @@ PVOID supAllocateLockedMemory(
     _In_ ULONG Protect
 )
 {
-    PVOID Buffer;
-    DWORD lastError;
-
-    SetLastError(ERROR_SUCCESS);
+    PVOID Buffer = NULL;
 
     Buffer = VirtualAllocEx(NtCurrentProcess(),
         NULL,
@@ -76,16 +74,13 @@ PVOID supAllocateLockedMemory(
 
         if (!VirtualLock(Buffer, Size)) {
 
-            lastError = GetLastError();
-
             VirtualFreeEx(NtCurrentProcess(),
                 Buffer,
                 0,
                 MEM_RELEASE);
 
-            SetLastError(lastError);
-
             Buffer = NULL;
+
         }
 
     }
@@ -106,22 +101,16 @@ BOOL supFreeLockedMemory(
     _In_ SIZE_T LockedSize
 )
 {
-    BOOL bUnlocked, bFreed;
-    DWORD e = ERROR_SUCCESS;
+    if (VirtualUnlock(Memory, LockedSize)) {
 
-    if (Memory == NULL)
-        return FALSE;
+        return VirtualFreeEx(NtCurrentProcess(),
+            Memory,
+            0,
+            MEM_RELEASE);
 
-    bUnlocked = VirtualUnlock(Memory, LockedSize);
-    if (!bUnlocked)
-        e = GetLastError();
+    }
 
-    bFreed = VirtualFreeEx(NtCurrentProcess(), Memory, 0, MEM_RELEASE);
-    if (!bFreed && e == ERROR_SUCCESS)
-        e = GetLastError();
-
-    SetLastError(e);
-    return (bUnlocked && bFreed);
+    return FALSE;
 }
 
 /*
@@ -159,9 +148,6 @@ NTSTATUS supCallDriverEx(
         ntStatus = NtWaitForSingleObject(DeviceHandle,
             FALSE,
             NULL);
-
-        if (NT_SUCCESS(ntStatus))
-            ntStatus = ioStatus.Status;
 
     }
 
@@ -694,144 +680,94 @@ BOOLEAN supVerifyMappedImageMatchesChecksum(
     return (CheckSum == HeaderSum);
 }
 
-typedef struct _REGSTACK_ENTRY {
-    WCHAR SubKey[MAX_PATH + 1];
-} REGSTACK_ENTRY, * PREGSTACK_ENTRY;
-
 /*
-* supxDeleteKeyTreeWorker
+* supxDeleteKeyRecursive
 *
 * Purpose:
 *
-* Delete key and it subkeys/values.
+* Delete key and all it subkeys/values.
 *
 */
-BOOL supxDeleteKeyTreeWorker(
+BOOL supxDeleteKeyRecursive(
     _In_ HKEY hKeyRoot,
-    _In_ LPWSTR lpSubKey
-)
+    _In_ LPCWSTR lpSubKey)
 {
-    HKEY hKey;
+    LPWSTR lpEnd;
     LONG lResult;
     DWORD dwSize;
-    FILETIME ftWrite;
     WCHAR szName[MAX_PATH + 1];
-    WCHAR workingPath[MAX_PATH * 2];
-    USHORT depthStack[256]; // depth (path length in WCHARs, excluding terminator)
-    INT sp = -1;
-    SIZE_T baseLen, curLen;
-    SIZE_T nameLen;
-    BOOL hasTrailingSlash;
-    PWCHAR p;
-
-    if (lpSubKey == NULL || lpSubKey[0] == 0)
-        return FALSE;
-
-    RtlSecureZeroMemory(depthStack, sizeof(depthStack));
-    _strncpy(workingPath, RTL_NUMBER_OF(workingPath), lpSubKey, RTL_NUMBER_OF(workingPath) - 1);
+    HKEY hKey;
+    FILETIME ftWrite;
 
     //
-    // Try fast delete first.
+    // Attempt to delete key as is.
     //
-    lResult = RegDeleteKey(hKeyRoot, workingPath);
-    if (lResult == ERROR_SUCCESS || lResult == ERROR_FILE_NOT_FOUND)
+    lResult = RegDeleteKey(hKeyRoot, lpSubKey);
+    if (lResult == ERROR_SUCCESS)
         return TRUE;
 
-    lResult = RegOpenKeyEx(hKeyRoot, workingPath, 0, KEY_READ, &hKey);
+    //
+    // Try to open key to check if it exist.
+    //
+    lResult = RegOpenKeyEx(hKeyRoot, lpSubKey, 0, KEY_READ, &hKey);
     if (lResult != ERROR_SUCCESS) {
         if (lResult == ERROR_FILE_NOT_FOUND)
             return TRUE;
-        return FALSE;
+        else
+            return FALSE;
     }
+
+    //
+    // Add slash to the key path if not present.
+    //
+    lpEnd = _strend(lpSubKey);
+    if (*(lpEnd - 1) != TEXT('\\')) {
+        *lpEnd = TEXT('\\');
+        lpEnd++;
+        *lpEnd = TEXT('\0');
+    }
+
+    //
+    // Enumerate subkeys and call this func for each.
+    //
+    dwSize = MAX_PATH;
+    lResult = RegEnumKeyEx(hKey, 0, szName, &dwSize, NULL,
+        NULL, NULL, &ftWrite);
+
+    if (lResult == ERROR_SUCCESS) {
+
+        do {
+
+            _strncpy(lpEnd, MAX_PATH, szName, MAX_PATH);
+
+            if (!supxDeleteKeyRecursive(hKeyRoot, lpSubKey))
+                break;
+
+            dwSize = MAX_PATH;
+
+            lResult = RegEnumKeyEx(hKey, 0, szName, &dwSize, NULL,
+                NULL, NULL, &ftWrite);
+
+        } while (lResult == ERROR_SUCCESS);
+    }
+
+    lpEnd--;
+    *lpEnd = TEXT('\0');
+
     RegCloseKey(hKey);
 
     //
-    // Normalize base path: remove trailing backslashes (keep root form if any).
+    // Delete current key, all it subkeys should be already removed.
     //
-    baseLen = _strlen(workingPath);
-    while (baseLen > 0 && workingPath[baseLen - 1] == L'\\') {
-        workingPath[baseLen - 1] = 0;
-        baseLen--;
-    }
-    if (baseLen == 0)
-        return FALSE;
+    lResult = RegDeleteKey(hKeyRoot, lpSubKey);
+    if (lResult == ERROR_SUCCESS)
+        return TRUE;
 
-    ++sp;
-    depthStack[sp] = (USHORT)baseLen;
-
-    while (sp >= 0) {
-
-        curLen = depthStack[sp];
-        workingPath[curLen] = 0;
-
-        lResult = RegOpenKeyEx(hKeyRoot, workingPath, 0, KEY_READ, &hKey);
-        if (lResult != ERROR_SUCCESS) {
-            if (lResult == ERROR_FILE_NOT_FOUND) {
-                sp--;
-                continue;
-            }
-            return FALSE;
-        }
-
-        dwSize = MAX_PATH;
-        lResult = RegEnumKeyEx(hKey, 0, szName, &dwSize, NULL, NULL, NULL, &ftWrite);
-
-        if (lResult == ERROR_NO_MORE_ITEMS) {
-
-            RegCloseKey(hKey);
-            RegDeleteKey(hKeyRoot, workingPath);
-            sp--;
-            continue;
-        }
-
-        if (lResult != ERROR_SUCCESS) {
-            RegCloseKey(hKey);
-            return FALSE;
-        }
-
-        RegCloseKey(hKey);
-
-        //
-        // Append child: workingPath + '\' + child + '\'.
-        //
-        nameLen = dwSize;
-        hasTrailingSlash = (curLen > 0 && workingPath[curLen - 1] == L'\\');
-
-        //
-        // Ensure capacity: base + optional '\' + name + optional '\' + 0.
-        //
-        if (curLen + (hasTrailingSlash ? 0 : 1) + nameLen + 1 + 1 >= RTL_NUMBER_OF(workingPath))
-            return FALSE;
-
-        p = workingPath + curLen;
-        if (!hasTrailingSlash) {
-            *p++ = L'\\';
-            curLen++;
-        }
-
-        _strncpy(p, RTL_NUMBER_OF(workingPath) - curLen, szName, nameLen);
-        p[nameLen] = 0;
-        curLen += nameLen;
-
-        //
-        // Add trailing backslash to simplify appending next level.
-        //
-        p = workingPath + curLen;
-        *p++ = L'\\';
-        *p = 0;
-        curLen++;
-
-        if (++sp >= (INT)RTL_NUMBER_OF(depthStack))
-            return FALSE;
-
-        depthStack[sp] = (USHORT)curLen;
-    }
-
-    return TRUE;
+    return FALSE;
 }
 
 /*
-* supRegDeleteKeyTree
+* supRegDeleteKeyRecursive
 *
 * Purpose:
 *
@@ -842,19 +778,14 @@ BOOL supxDeleteKeyTreeWorker(
 * SubKey should not be longer than 260 chars.
 *
 */
-BOOL supRegDeleteKeyTree(
+BOOL supRegDeleteKeyRecursive(
     _In_ HKEY hKeyRoot,
     _In_ LPCWSTR lpSubKey)
 {
     WCHAR szKeyName[MAX_PATH * 2];
-
-    if (lpSubKey == NULL)
-        return FALSE;
-
     RtlSecureZeroMemory(szKeyName, sizeof(szKeyName));
-    _strncpy(szKeyName, RTL_NUMBER_OF(szKeyName), lpSubKey, RTL_NUMBER_OF(szKeyName) - 1);
-
-    return supxDeleteKeyTreeWorker(hKeyRoot, szKeyName);
+    _strncpy(szKeyName, MAX_PATH * 2, lpSubKey, MAX_PATH);
+    return supxDeleteKeyRecursive(hKeyRoot, szKeyName);
 }
 
 /*
@@ -892,52 +823,16 @@ NTSTATUS supRegWriteValueString(
     _In_ LPCWSTR ValueData
 )
 {
-    NTSTATUS status;
+    ULONG dataSize;
     UNICODE_STRING valueName;
-    SIZE_T length;
-    SIZE_T bytesNeeded;
-    PWCHAR buffer;
-    WCHAR smallBuf[64];
-
-    if (ValueName == NULL || ValueData == NULL)
-        return STATUS_INVALID_PARAMETER;
+    WCHAR szData[64];
 
     RtlInitUnicodeString(&valueName, ValueName);
+    _strcpy(szData, ValueData);
+    dataSize = (ULONG)((1 + _strlen(szData)) * sizeof(WCHAR));
 
-    length = _strlen(ValueData);
-    if (length == 0) {
-        smallBuf[0] = 0;
-        return NtSetValueKey(RegistryHandle, &valueName, 0, REG_SZ,
-            smallBuf, (ULONG)sizeof(UNICODE_NULL));
-    }
-
-    if (length >= 0xFFFFFFFF / sizeof(WCHAR))
-        return STATUS_INVALID_PARAMETER;
-
-    bytesNeeded = (length + 1) * sizeof(WCHAR);
-
-    if (length < RTL_NUMBER_OF(smallBuf)) {
-        buffer = smallBuf;
-        _strncpy(buffer, RTL_NUMBER_OF(smallBuf), ValueData, RTL_NUMBER_OF(smallBuf));
-    }
-    else {
-        buffer = (PWCHAR)supHeapAlloc(bytesNeeded);
-        if (buffer == NULL)
-            return STATUS_INSUFFICIENT_RESOURCES;
-        _strncpy(buffer, bytesNeeded / sizeof(WCHAR), ValueData, bytesNeeded / sizeof(WCHAR));
-    }
-
-    status = NtSetValueKey(RegistryHandle,
-        &valueName,
-        0,
-        REG_SZ,
-        buffer,
-        (ULONG)bytesNeeded);
-
-    if (buffer != smallBuf)
-        supHeapFree(buffer);
-
-    return status;
+    return NtSetValueKey(RegistryHandle, &valueName, 0, REG_SZ,
+        (PVOID)&szData, dataSize);
 }
 
 /*
@@ -1195,7 +1090,7 @@ NTSTATUS supUnloadDriver(
 
     if (NT_SUCCESS(status)) {
         if (fRemove)
-            supRegDeleteKeyTree(HKEY_LOCAL_MACHINE, &szBuffer[keyOffset]);
+            supRegDeleteKeyRecursive(HKEY_LOCAL_MACHINE, &szBuffer[keyOffset]);
     }
 
     return status;
@@ -1478,7 +1373,7 @@ BOOL supQueryObjectFromHandle(
     if (pHandles) {
         for (i = 0; i < pHandles->NumberOfHandles; i++) {
             if (pHandles->Handles[i].UniqueProcessId == CurrentProcessId) {
-                if (pHandles->Handles[i].HandleValue == (ULONG_PTR)hOject) {
+                if (pHandles->Handles[i].HandleValue == (USHORT)(ULONG_PTR)hOject) {
                     *Address = (ULONG_PTR)pHandles->Handles[i].Object;
                     bFound = TRUE;
                     break;
@@ -2047,8 +1942,6 @@ BOOL supManageDummyDll(
                     if (LoadLibraryEx(lpFileName, NULL, 0))
                         bResult = TRUE;
                 }
-
-                supHeapFree(dataBuffer);
             }
             else {
                 SetLastError(ERROR_FILE_INVALID);
@@ -2433,110 +2326,14 @@ BOOL supxSetupInstallDriverFromInf(
 }
 
 /*
-* supSetupManageFsFilterDriverPackage
+* supSetupManageDriverPackage
 *
 * Purpose:
 *
 * Drop or remove required driver package files from disk in the current process directory.
 *
 */
-BOOL supSetupManageFsFilterDriverPackage(
-    _In_ PVOID Context,
-    _In_ BOOLEAN DoInstall,
-    _In_ PSUP_SETUP_DRVPKG DriverPackage
-)
-{
-    BOOL bResult = FALSE;
-    LPWSTR lpFileName;
-    KDU_CONTEXT* context = (KDU_CONTEXT*)Context;
-
-    PUNICODE_STRING CurrentDirectory = &NtCurrentPeb()->ProcessParameters->CurrentDirectory.DosPath;
-    SIZE_T allocSize = 64 +
-        _strlen(DriverPackage->InfFile) * sizeof(WCHAR) +
-        CurrentDirectory->Length +
-        sizeof(WCHAR);
-
-    ULONG lastError = ERROR_SUCCESS;
-
-    if (DoInstall) {
-
-        //
-        // Drop target driver.
-        //
-        if (!KDUProvExtractVulnerableDriver(context)) {
-            SetLastError(ERROR_INTERNAL_ERROR);
-            return FALSE;
-        }
-    }
-
-    //
-    // Drop inf file.
-    //
-    lpFileName = (LPWSTR)supHeapAlloc(allocSize);
-    if (lpFileName) {
-
-        StringCchPrintf(lpFileName, allocSize / sizeof(WCHAR), TEXT("%ws%ws"),
-            CurrentDirectory->Buffer,
-            DriverPackage->InfFile);
-
-        if (supExtractFileFromDB(context->ModuleBase, lpFileName, DriverPackage->InfFileResourceId)) {
-
-            WCHAR szCmd[MAX_PATH * 2];
-            WCHAR szFileName[MAX_PATH * 2];
-
-            StringCchPrintf(szCmd, ARRAYSIZE(szCmd),
-                TEXT("%ws 132 %ws"),
-                DoInstall ? TEXT("DefaultInstall") : TEXT("DefaultUninstall"),
-                lpFileName);
-
-#pragma warning(push)
-#pragma warning(disable: 6387)
-            InstallHinfSection(NULL, NULL, szCmd, 0);
-#pragma warning(pop)
-
-            //
-            // Since it doesn't provide any way to check result we have to inspect changes ourself.
-            //
-            StringCchPrintf(szFileName, RTL_NUMBER_OF(szFileName), TEXT("%ws\\system32\\drivers\\%ws.sys"),
-                USER_SHARED_DATA->NtSystemRoot,
-                context->Provider->LoadData->DriverName);
-
-            if (RtlDoesFileExists_U(szFileName)) {
-                if (DoInstall)
-                    bResult = TRUE;
-                else
-                    lastError = ERROR_FILE_EXISTS;
-            }
-            else {
-                if (DoInstall)
-                    lastError = ERROR_FILE_NOT_FOUND;
-                else
-                    bResult = TRUE;
-            }
-
-        }
-        else {
-            lastError = ERROR_FILE_NOT_FOUND;
-        }
-        supHeapFree(lpFileName);
-    }
-    else {
-        lastError = ERROR_NOT_ENOUGH_MEMORY;
-    }
-
-    SetLastError(lastError);
-    return bResult;
-}
-
-/*
-* supSetupManagePnpDriverPackage
-*
-* Purpose:
-*
-* Drop or remove required driver package files from disk in the current process directory.
-*
-*/
-BOOL supSetupManagePnpDriverPackage(
+BOOL supSetupManageDriverPackage(
     _In_ PVOID Context,
     _In_ BOOLEAN DoInstall,
     _In_ PSUP_SETUP_DRVPKG DriverPackage
@@ -2550,8 +2347,7 @@ BOOL supSetupManagePnpDriverPackage(
     PUNICODE_STRING CurrentDirectory = &NtCurrentPeb()->ProcessParameters->CurrentDirectory.DosPath;
     SIZE_T allocSize = 64 +
         ((_strlen(DriverPackage->CatalogFile) + _strlen(DriverPackage->InfFile)) * sizeof(WCHAR)) +
-        CurrentDirectory->Length +
-        sizeof(WCHAR);
+        CurrentDirectory->Length;
 
     ULONG length, lastError = ERROR_SUCCESS;
 
@@ -2608,14 +2404,8 @@ BOOL supSetupManagePnpDriverPackage(
 
                 }
             }
-            else {
-                lastError = ERROR_FILE_NOT_FOUND;
-            }
 
             supHeapFree(lpFileName);
-        }
-        else {
-            lastError = ERROR_NOT_ENOUGH_MEMORY;
         }
     }
     else {
@@ -2641,9 +2431,6 @@ BOOL supSetupManagePnpDriverPackage(
 
             supHeapFree(lpFileName);
             bResult = TRUE;
-        }
-        else {
-            lastError = ERROR_NOT_ENOUGH_MEMORY;
         }
 
     }
@@ -3390,98 +3177,44 @@ BOOL supEnumeratePhysicalMemory(
 * Purpose:
 *
 * Return state of CI variable enabling/disabling msft block list.
-* Windows 11 22H2+ (build >= 22621): missing value = enabled (default).
-* Older Windows 10: missing value treated as enabled only if HVCI active, otherwise disabled.
 *
 */
 BOOL supDetectMsftBlockList(
     _In_ PBOOL Enabled,
-    _In_ BOOL Disable,
-    _In_ ULONG NtBuildNumber,
-    _In_ BOOL HvciActive
+    _In_ BOOL Disable
 )
 {
+    LPCWSTR lpKey = L"System\\CurrentControlSet\\Control\\CI\\Config";
+    LPCWSTR lpValue = L"VulnerableDriverBlocklistEnable";
+
     HKEY hKey;
-    DWORD dwEnabled, cbData, dwType;
-    LSTATUS r;
-    BOOL haveValue, isWin11, success;
+    DWORD dwType = REG_DWORD, cbData = sizeof(DWORD), dwEnabled = 0;
 
-    isWin11 = (NtBuildNumber >= NT_WIN11_22H2);
-    if (Enabled)
-        *Enabled = isWin11 ? TRUE : (HvciActive ? TRUE : FALSE);
+    LRESULT result = RegOpenKeyEx(HKEY_LOCAL_MACHINE, lpKey, 0, KEY_ALL_ACCESS, &hKey);
+    if (result == ERROR_SUCCESS) {
 
-    hKey = NULL;
-    haveValue = FALSE;
+        result = RegQueryValueEx(hKey, lpValue, 0, &dwType, (LPBYTE)&dwEnabled, &cbData);
 
-    r = RegOpenKeyEx(HKEY_LOCAL_MACHINE,
-        L"System\\CurrentControlSet\\Control\\CI\\Config",
-        0,
-        Disable ? (KEY_QUERY_VALUE | KEY_SET_VALUE) : KEY_QUERY_VALUE,
-        &hKey);
-
-    if (r == ERROR_FILE_NOT_FOUND && Disable) {
-        r = RegCreateKeyEx(HKEY_LOCAL_MACHINE,
-            L"System\\CurrentControlSet\\Control\\CI\\Config",
-            0, NULL, REG_OPTION_NON_VOLATILE,
-            KEY_SET_VALUE | KEY_QUERY_VALUE,
-            NULL, &hKey, NULL);
-    }
-
-    if (r == ERROR_SUCCESS) {
-
-        cbData = sizeof(DWORD);
-        dwType = REG_DWORD;
-        dwEnabled = 0;
-        r = RegQueryValueEx(hKey,
-            L"VulnerableDriverBlocklistEnable",
-            0,
-            &dwType,
-            (LPBYTE)&dwEnabled,
-            &cbData);
-
-        if (r == ERROR_SUCCESS && dwType == REG_DWORD) {
-            haveValue = TRUE;
-            if (Enabled)
-                *Enabled = (dwEnabled > 0);
-        }
-        else if (r == ERROR_FILE_NOT_FOUND) {
-            r = ERROR_SUCCESS;
+        if (result == ERROR_SUCCESS && dwType == REG_DWORD) {
+            *Enabled = (dwEnabled > 0);
         }
 
-        if (Disable && r == ERROR_SUCCESS) {
-            if (!haveValue || dwEnabled != 0) {
-                dwEnabled = 0;
-                cbData = sizeof(DWORD);
-                if (RegSetValueEx(hKey,
-                    L"VulnerableDriverBlocklistEnable",
-                    0,
-                    REG_DWORD,
-                    (LPBYTE)&dwEnabled,
-                    cbData) != ERROR_SUCCESS)
-                {
-                    r = GetLastError();
-                }
+        if (Disable) {
+            cbData = sizeof(DWORD);
+            dwEnabled = 0;
+            result = RegSetValueEx(hKey, lpValue, 0, REG_DWORD, (LPBYTE)&dwEnabled, cbData);
+        }
+        else {
+            if (result == ERROR_FILE_NOT_FOUND) {
+                result = ERROR_SUCCESS;
+                *Enabled = TRUE;
             }
-            if (r == ERROR_SUCCESS && Enabled)
-                *Enabled = FALSE;
         }
 
         RegCloseKey(hKey);
     }
-    else if (r == ERROR_FILE_NOT_FOUND) {
-        r = ERROR_SUCCESS;
-    }
 
-    if (r == ERROR_SUCCESS && !haveValue && !Disable && Enabled) {
-        if (isWin11)
-            *Enabled = TRUE;
-        else
-            *Enabled = HvciActive ? TRUE : FALSE;
-    }
-
-    success = (r == ERROR_SUCCESS);
-    SetLastError((DWORD)r);
-    return success;
+    return (result == ERROR_SUCCESS);
 }
 
 /*
@@ -3815,342 +3548,4 @@ VOID CALLBACK supIpcDuplicateHandleCallback(
     __except (EXCEPTION_EXECUTE_HANDLER) {
         return;
     }
-}
-
-/*
-* supQuerySuperfetchInformation
-*
-* Purpose:
-*
-* Query Superfetch information.
-*
-*/
-NTSTATUS supQuerySuperfetchInformation(
-    _In_ SUPERFETCH_INFORMATION_CLASS InfoClass,
-    _In_ PVOID Buffer,
-    _In_ ULONG Length,
-    _Out_opt_ PULONG ReturnLength)
-{
-    NTSTATUS ntStatus;
-    ULONG returnedLength = 0;
-
-    struct {
-        ULONG Version;
-        ULONG Magic;
-        ULONG InfoClass;
-        PVOID Data;
-        ULONG Length;
-    } superfetchInfo;
-
-    RtlSecureZeroMemory(&superfetchInfo, sizeof(superfetchInfo));
-    superfetchInfo.Version = SUPERFETCH_VERSION;
-    superfetchInfo.Magic = SUPERFETCH_MAGIC;
-    superfetchInfo.InfoClass = (ULONG)InfoClass;
-    superfetchInfo.Data = Buffer;
-    superfetchInfo.Length = Length;
-
-    ntStatus = NtQuerySystemInformation(
-        (SYSTEM_INFORMATION_CLASS)79,
-        &superfetchInfo,
-        sizeof(superfetchInfo),
-        &returnedLength);
-
-    if (ReturnLength)
-        *ReturnLength = returnedLength;
-
-    return ntStatus;
-}
-
-/*
-* supQuerySuperfetchMemoryRanges
-*
-* Purpose:
-*
-* Query physical memory ranges via Superfetch.
-* Automatically selects V1 or V2 based on OS version.
-*
-*/
-BOOL supQuerySuperfetchMemoryRanges(
-    _Out_ PVOID* RangeBuffer,
-    _Out_ PULONG RangeCount)
-{
-    NTSTATUS ntStatus;
-    ULONG bufferLength = 0;
-    ULONG ntBuildNumber;
-    PVOID buffer = NULL;
-
-    struct {
-        ULONG Version;
-        ULONG Flags;
-        ULONG RangeCount;
-    } rangeInfoV2;
-
-    struct {
-        ULONG Version;
-        ULONG RangeCount;
-    } rangeInfoV1;
-
-    *RangeBuffer = NULL;
-    *RangeCount = 0;
-
-    ntBuildNumber = NtCurrentPeb()->OSBuildNumber;
-
-    //
-    // Windows 10 1809 (17763) and later use V2
-    //
-    if (ntBuildNumber >= NT_WIN10_REDSTONE5) {
-
-        RtlSecureZeroMemory(&rangeInfoV2, sizeof(rangeInfoV2));
-        rangeInfoV2.Version = 2;
-
-        ntStatus = supQuerySuperfetchInformation(
-            SuperfetchMemoryRangesQuery,
-            &rangeInfoV2,
-            sizeof(rangeInfoV2),
-            &bufferLength);
-
-        if (ntStatus == STATUS_BUFFER_TOO_SMALL && bufferLength > 0) {
-
-            buffer = supHeapAlloc(bufferLength);
-            if (buffer == NULL)
-                return FALSE;
-
-            RtlSecureZeroMemory(buffer, bufferLength);
-            ((PPF_MEMORY_RANGE_INFO_V2)buffer)->Version = 2;
-
-            ntStatus = supQuerySuperfetchInformation(
-                SuperfetchMemoryRangesQuery,
-                buffer,
-                bufferLength,
-                NULL);
-
-            if (NT_SUCCESS(ntStatus)) {
-                *RangeBuffer = buffer;
-                *RangeCount = ((PPF_MEMORY_RANGE_INFO_V2)buffer)->RangeCount;
-                return TRUE;
-            }
-
-            supHeapFree(buffer);
-        }
-    }
-
-    //
-    // Older Windows or V2 failed - try V1
-    //
-    RtlSecureZeroMemory(&rangeInfoV1, sizeof(rangeInfoV1));
-    rangeInfoV1.Version = 1;
-    bufferLength = 0;
-
-    ntStatus = supQuerySuperfetchInformation(
-        SuperfetchMemoryRangesQuery,
-        &rangeInfoV1,
-        sizeof(rangeInfoV1),
-        &bufferLength);
-
-    if (ntStatus == STATUS_BUFFER_TOO_SMALL && bufferLength > 0) {
-
-        buffer = supHeapAlloc(bufferLength);
-        if (buffer == NULL)
-            return FALSE;
-
-        RtlSecureZeroMemory(buffer, bufferLength);
-        ((PPF_MEMORY_RANGE_INFO_V1)buffer)->Version = 1;
-
-        ntStatus = supQuerySuperfetchInformation(
-            SuperfetchMemoryRangesQuery,
-            buffer,
-            bufferLength,
-            NULL);
-
-        if (NT_SUCCESS(ntStatus)) {
-            *RangeBuffer = buffer;
-            *RangeCount = ((PPF_MEMORY_RANGE_INFO_V1)buffer)->RangeCount;
-            return TRUE;
-        }
-
-        supHeapFree(buffer);
-    }
-
-    return FALSE;
-}
-
-/*
-* supBuildSuperfetchMemoryMap
-*
-* Purpose:
-*
-* Build virtual-to-physical translation table using Superfetch.
-*
-*/
-BOOL supBuildSuperfetchMemoryMap(
-    _Out_ PSUPERFETCH_MEMORY_MAP MemoryMap)
-{
-    NTSTATUS ntStatus;
-    ULONG ntBuildNumber;
-    ULONG rangeCount = 0;
-    ULONG i;
-    SIZE_T j;
-    ULONG_PTR basePfn, pageCount;
-    ULONG pfnBufferSize;
-    ULONG_PTR totalPages = 0;
-    ULONG_PTR currentEntry = 0;
-    BOOL useV2;
-    PVOID rangeBuffer = NULL;
-    PPF_PFN_PRIO_REQUEST pfnRequest = NULL;
-    PSUPERFETCH_TRANSLATION_ENTRY translationTable = NULL;
-
-    RtlSecureZeroMemory(MemoryMap, sizeof(SUPERFETCH_MEMORY_MAP));
-
-    if (!supQuerySuperfetchMemoryRanges(&rangeBuffer, &rangeCount))
-        return FALSE;
-
-    ntBuildNumber = NtCurrentPeb()->OSBuildNumber;
-    useV2 = (ntBuildNumber >= NT_WIN10_REDSTONE5);
-
-    //
-    // Calculate total pages
-    //
-    for (i = 0; i < rangeCount; i++) {
-        if (useV2) {
-            pageCount = ((PPF_MEMORY_RANGE_INFO_V2)rangeBuffer)->Ranges[i].PageCount;
-        }
-        else {
-            pageCount = ((PPF_MEMORY_RANGE_INFO_V1)rangeBuffer)->Ranges[i].PageCount;
-        }
-        totalPages += pageCount;
-    }
-
-    if (totalPages == 0) {
-        supHeapFree(rangeBuffer);
-        return FALSE;
-    }
-
-    translationTable = (PSUPERFETCH_TRANSLATION_ENTRY)supHeapAlloc(
-        totalPages * sizeof(SUPERFETCH_TRANSLATION_ENTRY));
-
-    if (translationTable == NULL) {
-        supHeapFree(rangeBuffer);
-        return FALSE;
-    }
-
-    //
-    // Query PFN information for each range
-    //
-    for (i = 0; i < rangeCount; i++) {
-
-        if (useV2) {
-            basePfn = ((PPF_MEMORY_RANGE_INFO_V2)rangeBuffer)->Ranges[i].BasePfn;
-            pageCount = ((PPF_MEMORY_RANGE_INFO_V2)rangeBuffer)->Ranges[i].PageCount;
-        }
-        else {
-            basePfn = ((PPF_MEMORY_RANGE_INFO_V1)rangeBuffer)->Ranges[i].BasePfn;
-            pageCount = ((PPF_MEMORY_RANGE_INFO_V1)rangeBuffer)->Ranges[i].PageCount;
-        }
-
-        pfnBufferSize = (ULONG)(FIELD_OFFSET(PF_PFN_PRIO_REQUEST, PageData) +
-            (pageCount * sizeof(MMPFN_IDENTITY)));
-
-        pfnRequest = (PPF_PFN_PRIO_REQUEST)supHeapAlloc(pfnBufferSize);
-        if (pfnRequest == NULL)
-            continue;
-
-        RtlSecureZeroMemory(pfnRequest, pfnBufferSize);
-        pfnRequest->Version = 1;
-        pfnRequest->RequestFlags = 1;
-        pfnRequest->PfnCount = pageCount;
-
-        for (j = 0; j < pageCount; j++) {
-            pfnRequest->PageData[j].PageFrameIndex = basePfn + j;
-        }
-
-        ntStatus = supQuerySuperfetchInformation(
-            SuperfetchPfnQuery,
-            pfnRequest,
-            pfnBufferSize,
-            NULL);
-
-        if (NT_SUCCESS(ntStatus)) {
-
-            for (j = 0; j < pageCount; j++) {
-
-                ULONG_PTR virtAddr = (ULONG_PTR)pfnRequest->PageData[j].u2.VirtualAddress;
-
-                if (virtAddr != 0 && (virtAddr & 0xFFFF800000000000ULL)) {
-                    translationTable[currentEntry].VirtualAddress = virtAddr & ~(PAGE_SIZE - 1);
-                    translationTable[currentEntry].PhysicalAddress = (basePfn + j) << PAGE_SHIFT;
-                    currentEntry++;
-                }
-            }
-        }
-
-        supHeapFree(pfnRequest);
-    }
-
-    supHeapFree(rangeBuffer);
-
-    if (currentEntry > 0) {
-        MemoryMap->TranslationTable = translationTable;
-        MemoryMap->TableSize = currentEntry;
-        MemoryMap->RangeCount = rangeCount;
-        return TRUE;
-    }
-
-    supHeapFree(translationTable);
-    return FALSE;
-}
-
-/*
-* supFreeSuperfetchMemoryMap
-*
-* Purpose:
-*
-* Free Superfetch memory map resources.
-*
-*/
-VOID supFreeSuperfetchMemoryMap(
-    _In_ PSUPERFETCH_MEMORY_MAP MemoryMap)
-{
-    if (MemoryMap->TranslationTable) {
-        supHeapFree(MemoryMap->TranslationTable);
-        MemoryMap->TranslationTable = NULL;
-    }
-    MemoryMap->TableSize = 0;
-    MemoryMap->RangeCount = 0;
-}
-
-/*
-* supSuperfetchVirtualToPhysical
-*
-* Purpose:
-*
-* Translate virtual address to physical using pre-built memory map.
-*
-*/
-BOOL supSuperfetchVirtualToPhysical(
-    _In_ PSUPERFETCH_MEMORY_MAP MemoryMap,
-    _In_ ULONG_PTR VirtualAddress,
-    _Out_ PULONG_PTR PhysicalAddress)
-{
-    ULONG_PTR i;
-    ULONG_PTR alignedVA;
-    ULONG_PTR pageOffset;
-    PSUPERFETCH_TRANSLATION_ENTRY table;
-
-    *PhysicalAddress = 0;
-
-    if (MemoryMap == NULL || MemoryMap->TranslationTable == NULL)
-        return FALSE;
-
-    alignedVA = VirtualAddress & ~(PAGE_SIZE - 1);
-    pageOffset = VirtualAddress & (PAGE_SIZE - 1);
-    table = MemoryMap->TranslationTable;
-
-    for (i = 0; i < MemoryMap->TableSize; i++) {
-        if (table[i].VirtualAddress == alignedVA) {
-            *PhysicalAddress = table[i].PhysicalAddress + pageOffset;
-            return TRUE;
-        }
-    }
-
-    return FALSE;
 }

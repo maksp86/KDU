@@ -43,14 +43,14 @@
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
     <ConfigurationType>DynamicLibrary</ConfigurationType>
     <UseDebugLibraries>false</UseDebugLibraries>
-    <PlatformToolset>v145</PlatformToolset>
+    <PlatformToolset>v143</PlatformToolset>
     <WholeProgramOptimization>true</WholeProgramOptimization>
     <CharacterSet>Unicode</CharacterSet>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
     <ConfigurationType>DynamicLibrary</ConfigurationType>
     <UseDebugLibraries>false</UseDebugLibraries>
-    <PlatformToolset>v145</PlatformToolset>
+    <PlatformToolset>v143</PlatformToolset>
     <WholeProgramOptimization>true</WholeProgramOptimization>
     <CharacterSet>Unicode</CharacterSet>
   </PropertyGroup>
@@ -154,7 +154,6 @@
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
       <ExceptionHandling>false</ExceptionHandling>
       <Optimization>MinSpace</Optimization>
-      <StringPooling>true</StringPooling>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
@@ -168,7 +167,6 @@
       </EntryPointSymbol>
       <NoEntryPoint>true</NoEntryPoint>
       <AdditionalOptions>/NOCOFFGRPINFO %(AdditionalOptions)</AdditionalOptions>
-      <LinkTimeCodeGeneration>UseLinkTimeCodeGeneration</LinkTimeCodeGeneration>
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
@@ -186,7 +184,6 @@
     <None Include="data\dbutilinf.bin" />
     <None Include="data\KMUEXE.bin" />
     <None Include="data\KMUSIG.bin" />
-    <None Include="data\NeacSafe64Cat.bin" />
     <None Include="drv\ALSysIO64.bin" />
     <None Include="drv\AMDRyzenMasterDriver.bin" />
     <None Include="drv\amsdk.bin" />
@@ -215,7 +212,6 @@
     <None Include="drv\gmerdrv.bin" />
     <None Include="drv\heavenluo.bin" />
     <None Include="drv\HW64.bin" />
-    <None Include="drv\HwRwDrv.x64.bin" />
     <None Include="drv\inpoutx64.bin" />
     <None Include="drv\iQVM64.bin" />
     <None Include="drv\irec.bin" />
@@ -228,7 +224,6 @@
     <None Include="drv\mimidrv.bin" />
     <None Include="drv\mktoolsx64.bin" />
     <None Include="drv\msio64.bin" />
-    <None Include="drv\NeacSafe64.bin" />
     <None Include="drv\nvoclock.bin" />
     <None Include="drv\pcdsrvc_x64.bin" />
     <None Include="drv\PdFwKrnl.bin" />
@@ -236,7 +231,6 @@
     <None Include="drv\phymemx64.bin" />
     <None Include="drv\phymem_panda.bin" />
     <None Include="drv\physmem.bin" />
-    <None Include="drv\pmxdrv64.bin" />
     <None Include="drv\procexp.bin" />
     <None Include="drv\procexp1627.bin" />
     <None Include="drv\procexp1702.bin" />
@@ -244,7 +238,6 @@
     <None Include="drv\rtkio64.bin" />
     <None Include="drv\rzpnk.bin" />
     <None Include="drv\SysDrv3S.bin" />
-    <None Include="drv\ThrottleStop.bin" />
     <None Include="drv\WinRing0x64.bin" />
     <None Include="drv\wnBios64.bin" />
   </ItemGroup>

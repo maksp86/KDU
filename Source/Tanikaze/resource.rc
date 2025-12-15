@@ -166,16 +166,6 @@ IDR_ASROCKDRV3          RCDATA                  "drv\\AsrDrv107n.bin"
 
 IDR_ASROCKDRV4          RCDATA                  "drv\\AsrDrv107.bin"
 
-IDR_PMXDRV64            RCDATA                  "drv\\pmxdrv64.bin"
-
-IDR_HWRWDRVX64          RCDATA                  "drv\\HwRwDrv.x64.bin"
-
-IDR_DATA_NEACSAFEINF    RCDATA                  "data\\NeacSafe64Cat.bin"
-
-IDR_NEACSAFE64          RCDATA                  "drv\\NeacSafe64.bin"
-
-IDR_THROTTLESTOP        RCDATA                  "drv\\ThrottleStop.bin"
-
 
 /////////////////////////////////////////////////////////////////////////////
 //
@@ -183,8 +173,8 @@ IDR_THROTTLESTOP        RCDATA                  "drv\\ThrottleStop.bin"
 //
 
 VS_VERSION_INFO VERSIONINFO
- FILEVERSION 1,4,5,2512
- PRODUCTVERSION 1,4,5,2512
+ FILEVERSION 1,1,9,2312
+ PRODUCTVERSION 1,1,9,2312
  FILEFLAGSMASK 0x3fL
 #ifdef _DEBUG
  FILEFLAGS 0x1L
@@ -201,12 +191,12 @@ BEGIN
         BEGIN
             VALUE "CompanyName", "UG North"
             VALUE "FileDescription", "Kernel Driver Utility Database"
-            VALUE "FileVersion", "1.4.5.2512"
+            VALUE "FileVersion", "1.1.9.2312"
             VALUE "InternalName", "Tanikaze.dll"
-            VALUE "LegalCopyright", "Copyright (C) 2020 - 2025 KDU Project"
+            VALUE "LegalCopyright", "Copyright (C) 2020 - 2024 KDU Project"
             VALUE "OriginalFilename", "Tanikaze.dll"
             VALUE "ProductName", "KDU"
-            VALUE "ProductVersion", "1.4.5.2512"
+            VALUE "ProductVersion", "1.1.9.2312"
         END
     END
     BLOCK "VarFileInfo"

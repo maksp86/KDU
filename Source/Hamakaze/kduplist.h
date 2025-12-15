@@ -1,12 +1,12 @@
 /*******************************************************************************
 *
-*  (C) COPYRIGHT AUTHORS, 2020 - 2025
+*  (C) COPYRIGHT AUTHORS, 2020 - 2023
 *
 *  TITLE:       KDUPLIST.H
 *
-*  VERSION:     1.45
+*  VERSION:     1.41
 *
-*  DATE:        02 Dec 2025
+*  DATE:        17 Dec 2023
 *
 *  Providers global list.
 *
@@ -19,7 +19,7 @@
 
 #pragma once
 
-#include "idrv/intel.h"
+#include "idrv/nal.h"
 #include "idrv/rtcore.h"
 #include "idrv/mapmem.h"
 #include "idrv/atszio.h"
@@ -48,8 +48,6 @@
 #include "idrv/binalyze.h"
 #include "idrv/rzpnk.h"
 #include "idrv/evga.h"
-#include "idrv/netease.h"
-#include "idrv/tpup.h"
 
 //
 // Victims public array.
@@ -1445,109 +1443,6 @@ static KDU_PROVIDER g_KDUProviders[] =
         (provValidatePrerequisites)NULL,
 
         (provOpenProcess)NULL
-    },
-
-    {
-        NULL,
-
-        (provStartVulnerableDriver)KDUProvStartVulnerableDriver,
-        (provStopVulnerableDriver)KDUProvStopVulnerableDriver,
-
-        (provRegisterDriver)NULL,
-        (provUnregisterDriver)NULL,
-        (provPreOpenDriver)NULL,
-        (provPostOpenDriver)KDUProviderPostOpen,
-        (provMapDriver)KDUMapDriver,
-        (provControlDSE)KDUControlDSE,
-
-        (provReadKernelVM)PmxDrvReadKernelVirtualMemory,
-        (provWriteKernelVM)PmxDrvWriteKernelVirtualMemory,
-
-        (provVirtualToPhysical)PmxDrvVirtualToPhysical,
-        (provQueryPML4)PmxDrvQueryPML4Value,
-        (provReadPhysicalMemory)PmxDrvReadPhysicalMemory,
-        (provWritePhysicalMemory)PmxDrvWritePhysicalMemory,
-
-        (provValidatePrerequisites)NULL,
-
-        (provOpenProcess)NULL
-    },
-
-    {
-        NULL,
-
-        (provStartVulnerableDriver)KDUProvStartVulnerableDriver,
-        (provStopVulnerableDriver)KDUProvStopVulnerableDriver,
-
-        (provRegisterDriver)NULL,
-        (provUnregisterDriver)NULL,
-        (provPreOpenDriver)NULL,
-        (provPostOpenDriver)KDUProviderPostOpen,
-        (provMapDriver)KDUMapDriver,
-        (provControlDSE)KDUControlDSE2,
-
-        (provReadKernelVM)NULL,
-        (provWriteKernelVM)NULL,
-
-        (provVirtualToPhysical)NULL,
-        (provQueryPML4)NULL,
-        (provReadPhysicalMemory)WRZeroReadPhysicalMemory,
-        (provWritePhysicalMemory)WRZeroWritePhysicalMemory,
-
-        (provValidatePrerequisites)NULL,
-
-        (provOpenProcess)NULL
-     },
-
-    {
-        NULL,
-
-        (provStartVulnerableDriver)NetEaseStartVulnerableDriver,
-        (provStopVulnerableDriver)NetEaseStopVulnerableDriver,
-
-        (provRegisterDriver)NULL,
-        (provUnregisterDriver)NULL,
-        (provPreOpenDriver)NULL,
-        (provPostOpenDriver)NULL,
-        (provMapDriver)KDUMapDriver,
-        (provControlDSE)KDUControlDSE,
-
-        (provReadKernelVM)NetEaseReadVirtualMemory,
-        (provWriteKernelVM)NetEaseWriteVirtualMemory,
-
-        (provVirtualToPhysical)NULL,
-        (provQueryPML4)NULL,
-        (provReadPhysicalMemory)NULL,
-        (provWritePhysicalMemory)NULL,
-
-        (provValidatePrerequisites)NULL,
-
-        (provOpenProcess)NULL
-    },
-
-    {
-        NULL,
-
-        (provStartVulnerableDriver)KDUProvStartVulnerableDriver,
-        (provStopVulnerableDriver)KDUProvStopVulnerableDriver,
-
-        (provRegisterDriver)NULL,
-        (provUnregisterDriver)NULL,
-        (provPreOpenDriver)NULL,
-        (provPostOpenDriver)KDUProviderPostOpen,
-        (provMapDriver)KDUMapDriver,
-        (provControlDSE)KDUControlDSE,
-
-        (provReadKernelVM)TpupReadKernelVirtualMemory,
-        (provWriteKernelVM)TpupWriteKernelVirtualMemory,
-
-        (provVirtualToPhysical)NULL,
-        (provQueryPML4)NULL,
-        (provReadPhysicalMemory)TpupReadPhysicalMemory,
-        (provWritePhysicalMemory)TpupWritePhysicalMemory,
-
-        (provValidatePrerequisites)TpupValidatePrerequisites,
-
-        (provOpenProcess)NULL
     }
+
 };
